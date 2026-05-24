@@ -154,8 +154,11 @@ class UserRecipeProgress(Base):
     user_id = Column(GUID, ForeignKey("users.id"), nullable=False)
     recipe_id = Column(GUID, ForeignKey("recipes.id"), nullable=False)
     week_number = Column(Integer, nullable=False)
-    status = Column(String(20), default="not_started")  # not_started, completed
+    status = Column(
+        String(20), default="not_started"
+    )  # not_started, in_progress, completed
     feedback = Column(String(20))  # too_easy, just_right, too_hard
+    notes = Column(Text, nullable=True)
     completed_at = Column(DateTime)
 
     # Relationships

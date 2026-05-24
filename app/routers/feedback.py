@@ -12,7 +12,7 @@ from app.schemas import (
 from app.services.weekly_plan import WeeklyPlanService
 from app.models import UserRecipeProgress, User, Recipe
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 
 router = APIRouter()
 plan_service = WeeklyPlanService()
@@ -34,6 +34,7 @@ async def submit_feedback(
         feedback_data.week_number,
         feedback_data.feedback,
         db,
+        notes=feedback_data.notes,
     )
 
     if not success:
@@ -47,6 +48,7 @@ async def submit_feedback(
             week_number=feedback_data.week_number,
             status="completed",
             feedback=feedback_data.feedback,
+            notes=(feedback_data.notes.strip() if feedback_data.notes else None),
             completed_at=datetime.now(timezone.utc),
         )
         db.add(new_progress)
@@ -224,11 +226,14 @@ async def update_recipe_status(
         progress.status = status_update.status
 
         if status_update.status == "completed":
-            progress.completed_at = datetime.utcnow()
+            progress.completed_at = datetime.now(timezone.utc)
+        elif status_update.status == "in_progress":
+            progress.completed_at = None
         elif status_update.status == "not_started":
             # Clear completion data when marking as incomplete
             progress.completed_at = None
             progress.feedback = None
+            progress.notes = None
             progress.satisfaction_rating = None
             progress.difficulty_rating = None
 

@@ -374,7 +374,13 @@ class WeeklyPlanService:
         return False
 
     def process_feedback(
-        self, user_id: int, recipe_id: int, week_number: int, feedback: str, db: Session
+        self,
+        user_id: int,
+        recipe_id: int,
+        week_number: int,
+        feedback: str,
+        db: Session,
+        notes: str | None = None,
     ) -> bool:
         """Process user feedback for a recipe"""
         progress = (
@@ -393,6 +399,8 @@ class WeeklyPlanService:
         # Update progress
         setattr(progress, "status", "completed")
         setattr(progress, "feedback", feedback)
+        if notes is not None:
+            setattr(progress, "notes", notes.strip() or None)
         setattr(progress, "completed_at", datetime.now(timezone.utc))
 
         db.commit()

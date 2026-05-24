@@ -180,10 +180,11 @@ class FeedbackCreate(BaseModel):
     recipe_id: UUID
     week_number: int
     feedback: str = Field(..., pattern="^(too_easy|just_right|too_hard)$")
+    notes: Optional[str] = Field(None, max_length=2000)
 
 
 class UpdateRecipeStatus(BaseModel):
-    status: Literal["not_started", "completed"]
+    status: Literal["not_started", "in_progress", "completed"]
 
 
 class UserRecipeProgressResponse(BaseModel):
@@ -193,6 +194,7 @@ class UserRecipeProgressResponse(BaseModel):
     week_number: int
     status: str
     feedback: Optional[str]
+    notes: Optional[str] = None
     completed_at: Optional[datetime]
 
 
