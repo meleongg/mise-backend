@@ -1,7 +1,7 @@
 import pytest
 from fastapi import Depends
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, delete
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
 import uuid
@@ -36,17 +36,6 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 Base.metadata.create_all(bind=engine)
 
 
-def override_get_db():
-    try:
-        db = TestingSessionLocal()
-        yield db
-    finally:
-        db.close()
-
-
-app.dependency_overrides[get_db] = override_get_db
-
-
 def _test_hash_password(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
@@ -68,9 +57,18 @@ users_router.verify_password = _test_verify_password
 app.dependency_overrides[get_current_user] = override_get_current_user
 
 
+@pytest.fixture(autouse=True)
+def _reset_database():
+    """Clear all rows after each test so shared in-memory DB stays isolated."""
+    yield
+    with engine.begin() as conn:
+        for table in reversed(Base.metadata.sorted_tables):
+            conn.execute(delete(table))
+
+
 @pytest.fixture
 def db() -> Session:
-    """Get test database session"""
+    """Transactional session for seeding fixture data (flushed, not committed)."""
     connection = engine.connect()
     transaction = connection.begin()
     session = TestingSessionLocal(bind=connection)
@@ -81,9 +79,15 @@ def db() -> Session:
 
 
 @pytest.fixture
-def client():
-    """Get test client"""
-    return TestClient(app)
+def client(db: Session):
+    """Test client using the same DB session as fixtures."""
+
+    def override_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    yield TestClient(app)
+    app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.fixture
@@ -101,7 +105,7 @@ def test_user(db: Session):
         hashed_password=_test_hash_password("test123"),
     )
     db.add(user)
-    db.commit()
+    db.flush()
     db.refresh(user)
     return user
 
@@ -124,7 +128,9 @@ def test_recipes(db: Session) -> list:
         )
         db.add(recipe)
         recipes.append(recipe)
-    db.commit()
+    db.flush()
+    for recipe in recipes:
+        db.refresh(recipe)
     return recipes
 
 
@@ -142,6 +148,22 @@ def test_plan(db: Session, test_user: User, test_recipes: list):
         is_unlocked=True,
     )
     db.add(plan)
-    db.commit()
+    db.flush()
     db.refresh(plan)
     return plan
+
+
+@pytest.fixture
+def test_recipe_progress(db: Session, test_user: User, test_recipes: list):
+    """Create a not_started progress row for the first test recipe."""
+    progress = UserRecipeProgress(
+        id=uuid.uuid4(),
+        user_id=test_user.id,
+        recipe_id=test_recipes[0].id,
+        week_number=1,
+        status="not_started",
+    )
+    db.add(progress)
+    db.flush()
+    db.refresh(progress)
+    return progress

@@ -184,10 +184,10 @@ async def update_recipe_status(
     current_user=Depends(get_current_user),
 ):
     """
-    Update the status of a recipe (mark as incomplete/complete).
+    Update recipe progress status: not_started, in_progress, or completed.
 
-    This allows users to toggle between completed and not_started states.
-    When marking as incomplete, feedback and rating are cleared.
+    Marking not_started clears feedback, notes, and ratings.
+    in_progress clears completed_at only; completed sets completed_at.
     """
     require_same_user(current_user, user_id)
 
