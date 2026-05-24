@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from uuid import UUID
 from app.database import get_db
-from app.utils.auth import get_current_user
+from app.utils.auth import get_current_user, require_same_user
 from app.utils.password import hash_password, verify_password
 from app.models import User
 from app.schemas import (
@@ -44,6 +44,7 @@ async def get_user(
     user_id: UUID, db: Session = Depends(get_db), current_user=Depends(get_current_user)
 ):
     """Get user profile by ID"""
+    require_same_user(current_user, user_id)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
@@ -60,6 +61,7 @@ async def update_user(
     current_user=Depends(get_current_user),
 ):
     """Update user profile"""
+    require_same_user(current_user, user_id)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
@@ -79,9 +81,8 @@ async def update_user(
 async def list_users(
     db: Session = Depends(get_db), current_user=Depends(get_current_user)
 ):
-    """List all users (for testing purposes)"""
-    users = db.query(User).all()
-    return users
+    """Return only the authenticated user's profile."""
+    return [current_user]
 
 
 @router.put("/users/{user_id}/account", response_model=UserResponse)
@@ -92,12 +93,7 @@ async def update_account_details(
     current_user=Depends(get_current_user),
 ):
     """Update account details (email, first name, last name)"""
-    # Ensure user can only update their own account
-    if current_user.id != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only update your own account",
-        )
+    require_same_user(current_user, user_id)
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -131,12 +127,7 @@ async def change_password(
     current_user=Depends(get_current_user),
 ):
     """Change user password"""
-    # Ensure user can only change their own password
-    if current_user.id != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only change your own password",
-        )
+    require_same_user(current_user, user_id)
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -165,12 +156,7 @@ async def delete_account(
     current_user=Depends(get_current_user),
 ):
     """Delete user account (soft delete or hard delete based on requirements)"""
-    # Ensure user can only delete their own account
-    if current_user.id != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only delete your own account",
-        )
+    require_same_user(current_user, user_id)
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:

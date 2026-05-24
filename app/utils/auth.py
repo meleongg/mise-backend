@@ -2,6 +2,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 from app.models import User
 from app.database import get_db
 from app.constants import (
@@ -13,6 +14,15 @@ from app.constants import (
 from sqlalchemy.orm import Session
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+
+def require_same_user(current_user: User, user_id: UUID) -> None:
+    """Ensure the authenticated user can only access their own resources."""
+    if current_user.id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own data",
+        )
 
 
 def _create_token(user_id: str, token_type: str, expires_delta: timedelta) -> str:

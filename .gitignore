@@ -6,3 +6,6 @@ database.db
 *.db
 .DS_Store
 langsmith_examples.jsonl
+
+# Temp
+log.md

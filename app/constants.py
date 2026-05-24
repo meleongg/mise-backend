@@ -1,12 +1,14 @@
 # Embedding and vectorization configuration for ChefPath
 
+import os
+
 GENERATIVE_MODEL = "gpt-4o-mini"
 
 EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIMENSION = 1536
 BATCH_SIZE = 50
 
-SECRET_KEY = "your-secret-key"  # Replace with a secure key in production
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-dev-only")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 REFRESH_TOKEN_EXPIRE_DAYS = 14

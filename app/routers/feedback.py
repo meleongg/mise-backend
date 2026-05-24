@@ -2,7 +2,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.utils.auth import get_current_user
+from app.utils.auth import get_current_user, require_same_user
 from app.schemas import (
     FeedbackCreate,
     UserRecipeProgressResponse,
@@ -26,6 +26,7 @@ async def submit_feedback(
     current_user=Depends(get_current_user),
 ):
     """Log recipe completion and feedback (supports both update and create)"""
+    require_same_user(current_user, user_id)
     # Try to update existing progress first
     success = plan_service.process_feedback(
         user_id,
@@ -71,6 +72,7 @@ async def get_progress_path(
     user_id: UUID, db: Session = Depends(get_db), current_user=Depends(get_current_user)
 ):
     """Get user progress summary (path version)"""
+    require_same_user(current_user, user_id)
     summary = plan_service.get_progress_summary(user_id, db)
     if not summary:
         raise HTTPException(
@@ -95,6 +97,7 @@ async def get_weekly_progress(
     Get all recipe progress for a user in a specific week.
     Defaults to most recent week when week_number is not provided.
     """
+    require_same_user(current_user, user_id)
     return _fetch_weekly_progress(user_id, week_number, db)
 
 
@@ -109,6 +112,7 @@ async def get_weekly_progress_by_week(
     current_user=Depends(get_current_user),
 ):
     """Get all recipe progress for a user in a specific week."""
+    require_same_user(current_user, user_id)
     return _fetch_weekly_progress(user_id, week_number, db)
 
 
@@ -146,6 +150,7 @@ async def get_recipe_progress(
     current_user=Depends(get_current_user),
 ):
     """Get progress for a specific recipe in a specific week"""
+    require_same_user(current_user, user_id)
     progress = (
         db.query(UserRecipeProgress)
         .filter(
@@ -182,6 +187,7 @@ async def update_recipe_status(
     This allows users to toggle between completed and not_started states.
     When marking as incomplete, feedback and rating are cleared.
     """
+    require_same_user(current_user, user_id)
 
     # Verify user exists
     user = db.query(User).filter(User.id == user_id).first()
@@ -223,7 +229,8 @@ async def update_recipe_status(
             # Clear completion data when marking as incomplete
             progress.completed_at = None
             progress.feedback = None
-            progress.rating = None
+            progress.satisfaction_rating = None
+            progress.difficulty_rating = None
 
     db.commit()
     db.refresh(progress)

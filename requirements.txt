@@ -16,7 +16,7 @@ langchain-postgres
 pytest
 pytest-asyncio
 python-jose[cryptography]
-passlib[bcrypt]
+bcrypt>=4.0.1,<5.0.0
 langsmith
 langgraph
 slowapi

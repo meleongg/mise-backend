@@ -102,8 +102,7 @@ def create_context_message(state: Dict[str, Any]) -> SystemMessage:
     frequency = state.get("frequency", 3)
     exclude_ids = state.get("exclude_ids", [])
 
-    context_msg = SystemMessage(
-        content=f"""CURRENT CONTEXT:
+    context_msg = SystemMessage(content=f"""CURRENT CONTEXT:
 - user_id: {user_id}
 - user_goal: {user_goal}
 - frequency: {frequency} meals
@@ -120,8 +119,7 @@ The search tool will automatically filter by these preferences, but ensure your 
 align with the user's cuisine preference and skill level.
 
 You have access to tools that automatically use this context.
-DO NOT pass user_id or exclude_ids explicitly - they are injected automatically."""
-    )
+DO NOT pass user_id or exclude_ids explicitly - they are injected automatically.""")
 
     return context_msg
 

@@ -19,14 +19,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     op.execute("ALTER TABLE recipe_suggestions ENABLE ROW LEVEL SECURITY")
-    op.execute(
-        """
+    op.execute("""
         CREATE POLICY recipe_suggestions_select_own
         ON recipe_suggestions
         FOR SELECT
         USING (user_id = auth.uid())
-        """
-    )
+        """)
 
 
 def downgrade() -> None:

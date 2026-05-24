@@ -1,11 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-import json
 from typing import List
 from uuid import UUID
 import uuid
 from app.database import get_db
-from app.utils.auth import get_current_user
+from app.utils.auth import get_current_user, require_same_user
 from app.models import User, Recipe, WeeklyPlan
 from app.schemas import WeeklyPlanResponse, RecipeResponse
 from app.services.weekly_plan import WeeklyPlanService, parse_recipe_schedule
@@ -22,6 +21,7 @@ async def get_weekly_plan(
     current_user=Depends(get_current_user),
 ):
     """Get current week's recipes for a user"""
+    require_same_user(current_user, user_id)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
@@ -73,6 +73,7 @@ async def get_all_weekly_plans(
     user_id: UUID, db: Session = Depends(get_db), current_user=Depends(get_current_user)
 ):
     """Get all weekly plans for a user (for progress tracking)"""
+    require_same_user(current_user, user_id)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(

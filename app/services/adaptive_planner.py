@@ -143,8 +143,7 @@ class AdaptivePlannerService:
         where_clause = " AND ".join(where_conditions)
 
         # Build the complete SQL query with preference filters
-        raw_sql_query = text(
-            f"""
+        raw_sql_query = text(f"""
             SELECT
                 r.id,
                 r.name,
@@ -160,8 +159,7 @@ class AdaptivePlannerService:
                 CASE WHEN r.cuisine = :preferred_cuisine THEN 0 ELSE 1 END,
                 similarity_score DESC
             LIMIT :limit;
-        """
-        )
+        """)
 
         result = self.db.execute(
             raw_sql_query,
@@ -480,7 +478,9 @@ def generate_and_save_new_recipe(recipe_description: str) -> str:
             except Exception as e:
                 print(f"[TOOL] ⚠️ Could not update runtime state: {e}")
 
-            print(f"[TOOL: generate_and_save_new_recipe] ✅ Recipe created successfully")
+            print(
+                f"[TOOL: generate_and_save_new_recipe] ✅ Recipe created successfully"
+            )
 
             # Return in format that execute_tool can parse
             return f"Successfully generated recipe: {new_recipe.id}\nName: {new_recipe.name}\nCuisine: {new_recipe.cuisine}\nDifficulty: {new_recipe.difficulty}"

@@ -40,6 +40,7 @@ from app.schemas import (
 from app.services.intent_classifier import classify_message_intent
 from app.utils.uuid_helpers import uuids_to_strs, strs_to_uuids
 from app.utils.prompt_helpers import get_goal_description, get_skill_description
+from app.utils.auth import get_current_user, require_same_user
 from app.core.rate_limit import limiter
 
 # Load environment variables
@@ -129,11 +130,13 @@ async def casual_chat_endpoint(
     request: Request,
     user_id: uuid.UUID,
     chat_input: GeneralChatInput = Body(...),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Handles general knowledge questions using a low-cost LLM (Stateless).
     Bypasses the expensive LangGraph Agent and RAG tools.
     """
+    require_same_user(current_user, user_id)
     try:
         response_content = _get_general_knowledge_response(chat_input.user_message)
         return {"response": response_content}
@@ -152,6 +155,7 @@ async def adaptive_chat_endpoint(
     user_id: uuid.UUID,
     chat_input: GeneralChatInput = Body(...),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Adaptive chat endpoint that classifies intent and routes accordingly.
@@ -165,6 +169,7 @@ async def adaptive_chat_endpoint(
     Returns:
         AdaptiveChatResponse with response text and intent
     """
+    require_same_user(current_user, user_id)
     try:
         # Step 1: Classify the user's intent (cheap, fast operation)
         print(f"[AdaptiveChat] Classifying message: {chat_input.user_message[:50]}...")
@@ -212,6 +217,7 @@ async def swap_recipe_endpoint(
     request: Request = None,
     plan_service: Annotated[WeeklyPlanService, Depends(get_weekly_plan_service)] = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Swap a single recipe in the user's weekly plan with an AI-powered replacement.
@@ -228,6 +234,7 @@ async def swap_recipe_endpoint(
         404: User or plan not found
         500: Swap operation failed
     """
+    require_same_user(current_user, user_id)
     print(f"\n[SwapRecipe] Starting swap for user: {user_id}")
     print(f"[SwapRecipe] Recipe to replace: {swap_request.recipe_id_to_replace}")
     print(f"[SwapRecipe] Swap context: {swap_request.swap_context}")
@@ -541,6 +548,7 @@ async def generate_user_plan_endpoint(
     request: Request = None,
     plan_service: Annotated[WeeklyPlanService, Depends(get_weekly_plan_service)] = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Triggers the LangGraph Adaptive Agent to generate a new weekly plan
@@ -548,6 +556,7 @@ async def generate_user_plan_endpoint(
 
     Uses runtime context for efficient token management.
     """
+    require_same_user(current_user, user_id)
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -628,9 +637,9 @@ async def generate_user_plan_endpoint(
         print("Final state:", final_state)
 
         # Sync final state from runtime (runtime state is source of truth)
-        final_recipe_ids_str: List[
-            str
-        ] = runtime_state.candidate_recipes or final_state.get("candidate_recipes", [])
+        final_recipe_ids_str: List[str] = (
+            runtime_state.candidate_recipes or final_state.get("candidate_recipes", [])
+        )
 
         print("=" * 80)
         print("[PHASE 1: RUNTIME STATE SUMMARY]")
@@ -680,6 +689,7 @@ async def generate_user_plan_endpoint(
 async def check_next_week_eligibility(
     user_id: uuid.UUID,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Check if user is eligible to generate next week's plan.
@@ -691,6 +701,7 @@ async def check_next_week_eligibility(
         completion_status: progress details (completed/total recipes)
         message: human-readable status message
     """
+    require_same_user(current_user, user_id)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
@@ -759,6 +770,7 @@ async def generate_next_week_plan(
     request: Request = None,
     plan_service: Annotated[WeeklyPlanService, Depends(get_weekly_plan_service)] = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Generate the next week's meal plan.
@@ -768,6 +780,7 @@ async def generate_next_week_plan(
     - Creates a new plan for week_number + 1
     - Uses AI agent to generate recipes based on user feedback and history
     """
+    require_same_user(current_user, user_id)
     print(f"\n[GenerateNextWeek] Starting for user: {user_id}")
 
     user = db.query(User).filter(User.id == user_id).first()
