@@ -14,24 +14,12 @@ import os
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Create database tables
     create_tables()
 
-    # Initialize PostgresSaver for checkpointing
-    checkpointer = initialize_postgres_saver()
+    app.state.checkpoint_saver = initialize_postgres_saver()
+    print("✅ Checkpoint saver (in-memory) is active and ready.")
 
-    # Set on app.state
-    app.state.checkpoint_saver = checkpointer
-    print("✅ Checkpoint saver is active and ready.")
-
-    # Yield control to the application
     yield
-
-    # Shutdown: Close the connection properly
-    print("🔄 Shutting down checkpoint saver...")
-    if checkpointer and hasattr(checkpointer, "conn"):
-        checkpointer.conn.close()
-        print("✅ Checkpoint connection closed.")
 
 
 app = FastAPI(title="ChefPath Backend", version="1.0.0", lifespan=lifespan)

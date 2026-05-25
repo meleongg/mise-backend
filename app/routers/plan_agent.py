@@ -1,6 +1,5 @@
 import json
 import uuid
-import psycopg2
 import os
 import re
 from dotenv import load_dotenv
@@ -74,54 +73,6 @@ def _get_general_knowledge_response(user_message: str) -> str:
     )
     response = llm.invoke(prompt)
     return response.content
-
-
-def cleanup_user_checkpoints(user_id: uuid.UUID):
-    """
-    Cleans up LangGraph checkpoint tables for a specific user.
-    Removes entries from checkpoints, checkpoint_writes, and checkpoint_blobs tables.
-    """
-    try:
-        database_url = os.getenv("DATABASE_URL")
-        if not database_url:
-            print(f"[CheckpointCleanup] ⚠️ DATABASE_URL not found, skipping cleanup")
-            return
-
-        # psycopg2 needs plain postgresql:// not postgresql+psycopg://
-        if database_url.startswith("postgresql+psycopg://"):
-            database_url = database_url.replace(
-                "postgresql+psycopg://", "postgresql://"
-            )
-
-        thread_id = str(user_id)
-
-        conn = psycopg2.connect(database_url)
-        cur = conn.cursor()
-
-        # Delete from checkpoint_writes first (foreign key constraint)
-        cur.execute("DELETE FROM checkpoint_writes WHERE thread_id = %s", (thread_id,))
-        writes_deleted = cur.rowcount
-
-        # Delete from checkpoint_blobs (foreign key constraint)
-        cur.execute("DELETE FROM checkpoint_blobs WHERE thread_id = %s", (thread_id,))
-        blobs_deleted = cur.rowcount
-
-        # Delete from checkpoints
-        cur.execute("DELETE FROM checkpoints WHERE thread_id = %s", (thread_id,))
-        checkpoints_deleted = cur.rowcount
-
-        conn.commit()
-        cur.close()
-        conn.close()
-
-        print(f"[CheckpointCleanup] ✅ Cleaned up checkpoints for user {user_id}")
-        print(
-            f"[CheckpointCleanup] Deleted: {checkpoints_deleted} checkpoint(s), {writes_deleted} write(s), {blobs_deleted} blob(s)"
-        )
-
-    except Exception as e:
-        print(f"[CheckpointCleanup] ⚠️ Cleanup failed: {e}")
-        # Non-critical error, don't raise
 
 
 @router.post("/general/{user_id}", response_model=Dict[str, str])
@@ -881,9 +832,6 @@ async def generate_next_week_plan(
     }
 
     thread_id_str = str(user.id)
-
-    print(f"[GenerateNextWeek] Cleaning up old checkpoints before generation...")
-    cleanup_user_checkpoints(user_id)
 
     try:
         print(f"[GenerateNextWeek] Initial state: {initial_state}")
