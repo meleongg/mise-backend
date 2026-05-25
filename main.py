@@ -28,21 +28,43 @@ app = FastAPI(title="ChefPath Backend", version="1.0.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Configure CORS
-# Allow all origins in development, or restrict to specific origins via environment variable
-cors_origins = os.getenv("CORS_ORIGINS", "*")
-if cors_origins == "*":
-    allow_origins = ["*"]
+# --- Configure CORS ---
+# Env vars:
+#   CORS_ORIGINS        Comma-separated exact origins (e.g.
+#                       "https://chefpath.vercel.app,http://localhost:3000")
+#   CORS_ORIGIN_REGEX   Optional regex for dynamic origins like Vercel
+#                       preview deployments (e.g.
+#                       "^https://chefpath(-[\w-]+)?\.vercel\.app$")
+#
+# Browsers reject "Access-Control-Allow-Origin: *" combined with
+# "Access-Control-Allow-Credentials: true", so we never emit "*" here.
+# In dev we fall back to localhost defaults; in prod CORS_ORIGINS must be set.
+_default_dev_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+_raw_origins = os.getenv("CORS_ORIGINS", "").strip()
+if _raw_origins in ("", "*"):
+    allow_origins = list(_default_dev_origins)
+    if _raw_origins == "*":
+        print(
+            "[CORS] WARNING: CORS_ORIGINS='*' is not allowed with credentials. "
+            "Falling back to localhost dev origins. Set CORS_ORIGINS to an "
+            "explicit comma-separated list (e.g. https://chefpath.vercel.app)."
+        )
 else:
-    allow_origins = [origin.strip() for origin in cors_origins.split(",")]
+    allow_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
-print(f"[CORS] Configured with origins: {allow_origins}")
+allow_origin_regex = os.getenv("CORS_ORIGIN_REGEX") or None
+
+print(f"[CORS] Configured origins={allow_origins} regex={allow_origin_regex!r}")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
+    allow_origin_regex=allow_origin_regex,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["*"],
     max_age=3600,  # Cache preflight requests for 1 hour

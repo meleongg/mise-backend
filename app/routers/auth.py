@@ -26,7 +26,8 @@ router = APIRouter()
     "/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED
 )
 def register_user(data: RegisterRequest, db: Session = Depends(get_db)):
-    # Check if user already exists
+    # Email is normalized (lower-cased, stripped) by the RegisterRequest validator,
+    # so this comparison is case-insensitive in practice.
     existing_user = db.query(User).filter(User.email == data.email).first()
     if existing_user:
         return RegisterResponse(success=False, message="Email already registered")

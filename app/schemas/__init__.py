@@ -1,13 +1,45 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Literal
 from datetime import datetime
 from uuid import UUID
+
+# --- Password policy ---
+# Standard baseline aligned with NIST 800-63B guidance: length is the primary
+# strength factor; we additionally require a letter + digit for resilience
+# against trivial passwords. All characters (incl. spaces, symbols, unicode)
+# are permitted so users can pick passphrases and password-manager output.
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_MAX_LENGTH = 128
+PASSWORD_REQUIREMENTS_MESSAGE = (
+    f"Password must be {PASSWORD_MIN_LENGTH}-{PASSWORD_MAX_LENGTH} characters and "
+    "include at least one letter and one number."
+)
+
+
+def validate_password_strength(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("Password must be a string")
+    if value != value.strip():
+        raise ValueError("Password cannot start or end with whitespace")
+    length = len(value)
+    if length < PASSWORD_MIN_LENGTH or length > PASSWORD_MAX_LENGTH:
+        raise ValueError(PASSWORD_REQUIREMENTS_MESSAGE)
+    if not any(ch.isalpha() for ch in value):
+        raise ValueError(PASSWORD_REQUIREMENTS_MESSAGE)
+    if not any(ch.isdigit() for ch in value):
+        raise ValueError(PASSWORD_REQUIREMENTS_MESSAGE)
+    return value
 
 
 # Auth schemas
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_login_email(cls, value: str) -> str:
+        return value.strip().lower()
 
 
 # User schemas
@@ -78,8 +110,16 @@ class ChangePasswordRequest(BaseModel):
 
     current_password: str = Field(..., min_length=1)
     new_password: str = Field(
-        ..., min_length=6, description="New password (min 6 characters)"
+        ...,
+        min_length=PASSWORD_MIN_LENGTH,
+        max_length=PASSWORD_MAX_LENGTH,
+        description=PASSWORD_REQUIREMENTS_MESSAGE,
     )
+
+    @field_validator("new_password")
+    @classmethod
+    def _validate_new_password(cls, value: str) -> str:
+        return validate_password_strength(value)
 
 
 class MessageResponse(BaseModel):
@@ -109,10 +149,36 @@ class UserResponse(BaseModel):
 
 # Registration request/response schemas
 class RegisterRequest(BaseModel):
-    email: str
-    password: str
-    first_name: str
-    last_name: str
+    email: str = Field(..., min_length=3, max_length=320)
+    password: str = Field(
+        ...,
+        min_length=PASSWORD_MIN_LENGTH,
+        max_length=PASSWORD_MAX_LENGTH,
+        description=PASSWORD_REQUIREMENTS_MESSAGE,
+    )
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str = Field(..., min_length=1, max_length=100)
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if "@" not in normalized or "." not in normalized.split("@")[-1]:
+            raise ValueError("Enter a valid email address")
+        return normalized
+
+    @field_validator("first_name", "last_name")
+    @classmethod
+    def _trim_name(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("Name cannot be empty")
+        return trimmed
+
+    @field_validator("password")
+    @classmethod
+    def _validate_password(cls, value: str) -> str:
+        return validate_password_strength(value)
 
 
 class RegisterResponse(BaseModel):
