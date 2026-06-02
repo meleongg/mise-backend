@@ -53,7 +53,7 @@ class PlanState(TypedDict):
 
 
 # System prompt for the AI agent
-SYSTEM_PROMPT = """You are ChefPath, an expert adaptive meal planning assistant.
+SYSTEM_PROMPT = """You are Sodie, the expert adaptive meal planning assistant for Mise.
 
 Your goal is to find or generate recipes for the user by calling tools.
 
