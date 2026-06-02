@@ -279,6 +279,7 @@ class PlanGenerationInput(BaseModel):
 
 class GeneralChatInput(BaseModel):
     user_message: str
+    week_number: Optional[int] = None
 
 
 class AdaptiveChatResponse(BaseModel):

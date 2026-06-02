@@ -37,6 +37,7 @@ from app.schemas import (
     RecipeResponse,
 )
 from app.services.intent_classifier import classify_message_intent
+from app.services.sodie_chat_context import build_sodie_chat_context
 from app.utils.uuid_helpers import uuids_to_strs, strs_to_uuids
 from app.utils.prompt_helpers import get_goal_description, get_skill_description
 from app.utils.auth import get_current_user, require_same_user
@@ -55,21 +56,45 @@ def get_weekly_plan_service() -> WeeklyPlanService:
     return WeeklyPlanService()
 
 
-def _get_general_knowledge_response(user_message: str) -> str:
+def _get_sodie_coach_response(
+    user_message: str, context: str, *, mode: str = "general_knowledge"
+) -> str:
     """
-    Helper function to get a general knowledge response from Mise.
-    Reused across multiple endpoints.
+    Context-aware Sodie response for coach and analytics chat modes.
     """
     llm = ChatOpenAI(model=GENERATIVE_MODEL, temperature=0.5)
-    prompt = (
+
+    base_rules = (
         "You are Sodie, a friendly and experienced cooking mentor for Mise. "
-        "Your goal is to help users find their 'mise en place'—getting organized and confident. "
-        "Your primary directives are: "
-        "1. Be helpful, concise, and professional. "
-        "2. Stick strictly to the topic of cooking, ingredients, techniques, or kitchen facts. "
-        "3. Limit your response to a maximum of 150 words. Do not provide disclaimers or commentary. "
-        "Answer the user's question directly and clearly. "
-        f"Question: {user_message}"
+        "Help users get organized and confident in the kitchen. "
+        "Rules:\n"
+        "1. Be helpful, concise, and warm. Max 150 words. No meta-commentary.\n"
+        "2. Stick to cooking, meal prep, ingredients, techniques, and the user's plan.\n"
+        "3. Use ONLY the USER CONTEXT below for plan-specific facts. Do not invent meals, "
+        "stats, or progress not listed there.\n"
+        "4. Respect the user's dietary restrictions and allergens; cross-check recipe "
+        "dietary/allergen fields when relevant.\n"
+        "5. To change or swap a planned recipe, tell them to use the Swap button on that "
+        "recipe card—do not claim you can modify the plan in chat.\n"
+        "6. If ACTIVE_PLAN is none, encourage generating their weekly plan first (button on "
+        "this page) before week-specific prep or scheduling advice. Generic cooking Q&A is OK.\n"
+    )
+
+    if mode == "analytics":
+        mode_rules = (
+            "Mode: analytics. Answer questions about progress and stats using ONLY the "
+            "context. If data is missing, say so briefly.\n"
+        )
+    else:
+        mode_rules = (
+            "Mode: coach. Answer the user's question using context when it helps personalize "
+            "the advice.\n"
+        )
+
+    prompt = (
+        f"{base_rules}{mode_rules}\n"
+        f"USER CONTEXT:\n{context}\n\n"
+        f"User question: {user_message}"
     )
     response = llm.invoke(prompt)
     return response.content
@@ -81,6 +106,7 @@ async def casual_chat_endpoint(
     request: Request,
     user_id: uuid.UUID,
     chat_input: GeneralChatInput = Body(...),
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -89,7 +115,10 @@ async def casual_chat_endpoint(
     """
     require_same_user(current_user, user_id)
     try:
-        response_content = _get_general_knowledge_response(chat_input.user_message)
+        context = build_sodie_chat_context(db, current_user, chat_input.week_number)
+        response_content = _get_sodie_coach_response(
+            chat_input.user_message, context, mode="general_knowledge"
+        )
         return {"response": response_content}
 
     except Exception as e:
@@ -112,46 +141,30 @@ async def adaptive_chat_endpoint(
     Adaptive chat endpoint that classifies intent and routes accordingly.
 
     Routes:
-    - general_knowledge → Fast, cheap Q&A (stateless)
-    - analytics → Medium-cost query endpoint (future implementation)
+    - general_knowledge → Context-aware coach Q&A
+    - analytics → Progress/stats from user context
 
-    Note: Recipe modifications are now handled via dedicated /swap-recipe endpoint.
+    Note: Recipe modifications are handled via dedicated /swap-recipe endpoint.
 
     Returns:
         AdaptiveChatResponse with response text and intent
     """
     require_same_user(current_user, user_id)
     try:
-        # Step 1: Classify the user's intent (cheap, fast operation)
+        context = build_sodie_chat_context(db, current_user, chat_input.week_number)
+
         print(f"[AdaptiveChat] Classifying message: {chat_input.user_message[:50]}...")
         intent = classify_message_intent(chat_input.user_message)
         print(f"[AdaptiveChat] Classified as: {intent}")
 
-        # Step 2: Route based on intent
-        if intent == "general_knowledge":
-            print(f"[AdaptiveChat] Routing to: stateless Q&A")
-            response_content = _get_general_knowledge_response(chat_input.user_message)
-            return AdaptiveChatResponse(
-                response=response_content,
-                intent=intent,
-            )
-
-        elif intent == "analytics":
-            print(f"[AdaptiveChat] Routing to: analytics")
-            # Future: Query user's progress/stats
-            return AdaptiveChatResponse(
-                response="Analytics feature coming soon! You'll be able to track your progress here.",
-                intent=intent,
-            )
-
-        else:
-            # Fallback
-            print(f"[AdaptiveChat] Routing to: fallback (general knowledge)")
-            response_content = _get_general_knowledge_response(chat_input.user_message)
-            return AdaptiveChatResponse(
-                response=response_content,
-                intent="general_knowledge",
-            )
+        mode = "analytics" if intent == "analytics" else "general_knowledge"
+        response_content = _get_sodie_coach_response(
+            chat_input.user_message, context, mode=mode
+        )
+        return AdaptiveChatResponse(
+            response=response_content,
+            intent=intent if intent == "analytics" else "general_knowledge",
+        )
 
     except Exception as e:
         print(f"[AdaptiveChat] Error: {e}")
