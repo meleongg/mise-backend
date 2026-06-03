@@ -26,6 +26,23 @@ python scripts/generate_embeddings.py
 - Uses OpenAI's `text-embedding-3-small` model.
 - Optimized for batch processing and cost efficiency.
 
+### Backfill Recipe Images (`scripts/backfill_recipe_images.py`)
+
+Fills `recipes.image_url` from Pexels for rows with no image (AI recipes, etc.):
+
+```bash
+cd backend
+# .env needs DATABASE_URL + PEXELS_API_KEY
+python scripts/backfill_recipe_images.py --dry-run
+python scripts/backfill_recipe_images.py --limit 50
+python scripts/backfill_recipe_images.py
+python scripts/backfill_recipe_images.py --force --limit 20   # re-resolve bad images
+```
+
+- Default delay 18s between requests (~200/hour Pexels limit).
+- Without `--force`: only rows with null/empty `image_url`.
+- With `--force`: all recipes (or `--id` one); overwrites `image_url` when Pexels finds a new image, keeps the old URL if search fails.
+
 ### Clear Database (`scripts/clear_database.py`)
 
 Removes all data while keeping table structure:

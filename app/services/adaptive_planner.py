@@ -23,6 +23,7 @@ from app.schemas.adaptive_planner import (
 )
 from app.constants import EMBEDDING_MODEL, GENERATIVE_MODEL
 from app.services.ai_tasks import process_single_recipe_embedding_sync
+from app.services.recipe_image import attach_image_if_missing
 from app.database import SessionLocal
 from app.utils.uuid_helpers import str_to_uuid, strs_to_uuids
 from app.utils.recipe_formatters import instructions_json_to_text
@@ -383,7 +384,9 @@ def generate_and_save_new_recipe(recipe_description: str) -> str:
         "You are Sodie, a professional, meticulous adaptive cooking mentor for Mise. "
         "Your primary directives are: 1) Adhere strictly to the provided JSON schema. "
         "2) The recipe MUST be safe, feasible, and use common, accessible ingredients. "
-        "3) Your output MUST contain only the final JSON object, with no introductory text, commentary, or Markdown fences (```json)."
+        "3) Recipe names must be simple, everyday dish titles (e.g. 'Fried Rice', "
+        "'Chicken Tikka Masala') — never put skill level or hype words in the name. "
+        "4) Your output MUST contain only the final JSON object, with no introductory text, commentary, or Markdown fences (```json)."
     )
     user_request_prompt = f"""
       Generate a new, unique recipe. Ensure the following constraints are met:
@@ -394,7 +397,8 @@ def generate_and_save_new_recipe(recipe_description: str) -> str:
       - Cuisine/Style MUST satisfy the user's specific request.
 
       RECIPE DETAILS:
-      - Name: Must be creative and descriptive.
+      - Name: Simple dish title only (what you would see on a menu). No "Beginner's",
+        "Easy", "Mastery", "Ultimate", or similar — keep difficulty in the difficulty field.
       - Ingredients: Provide a list where EACH ingredient has TWO fields:
         * "name": The ingredient name (e.g., "Cashew nuts", "Onions", "Cumin seeds")
         * "measure": The quantity/measurement (e.g., "12", "½ tbsp", "3 sliced thinly")
@@ -468,6 +472,12 @@ def generate_and_save_new_recipe(recipe_description: str) -> str:
             # --- SYNCHRONOUS VECTORIZATION (Blocking the API thread) ---
             print("[TOOL] Generating embeddings for vector search...")
             process_single_recipe_embedding_sync(new_recipe.id, db)
+
+            image_url = attach_image_if_missing(new_recipe, db)
+            if image_url:
+                print(f"[TOOL] Attached Pexels image: {image_url}")
+            else:
+                print("[TOOL] No Pexels image (skipped or not found)")
 
             # Update runtime state with new recipe ID
             try:
