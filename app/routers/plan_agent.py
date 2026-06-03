@@ -1,7 +1,7 @@
 import json
+import logging
 import uuid
 import os
-import re
 from dotenv import load_dotenv
 from app.constants import GENERATIVE_MODEL, MAX_SWAPS_PER_WEEK
 from typing import Annotated, List, Dict, Any
@@ -41,7 +41,15 @@ from app.services.sodie_chat_context import build_sodie_chat_context
 from app.utils.uuid_helpers import uuids_to_strs, strs_to_uuids
 from app.utils.prompt_helpers import get_goal_description, get_skill_description
 from app.utils.auth import get_current_user, require_same_user
-from app.core.rate_limit import limiter
+from app.core.rate_limit import (
+    CHAT_RATE_LIMIT,
+    PLAN_GEN_RATE_LIMIT,
+    SWAP_RATE_LIMIT,
+    get_user_id_rate_limit_key,
+    limiter,
+)
+from app.services.content_moderation import ensure_user_text_allowed
+from app.services.sodie_llm import build_coach_prompt, invoke_chat_model
 
 # Load environment variables
 load_dotenv()
@@ -50,6 +58,7 @@ load_dotenv()
 TRACING_ENABLED = os.getenv("LANGSMITH_TRACING", "false").lower() == "true"
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def get_weekly_plan_service() -> WeeklyPlanService:
@@ -59,49 +68,15 @@ def get_weekly_plan_service() -> WeeklyPlanService:
 def _get_sodie_coach_response(
     user_message: str, context: str, *, mode: str = "general_knowledge"
 ) -> str:
-    """
-    Context-aware Sodie response for coach and analytics chat modes.
-    """
+    """Context-aware Sodie response for coach and analytics chat modes."""
     llm = ChatOpenAI(model=GENERATIVE_MODEL, temperature=0.5)
-
-    base_rules = (
-        "You are Sodie, a friendly and experienced cooking mentor for Mise. "
-        "Help users get organized and confident in the kitchen. "
-        "Rules:\n"
-        "1. Be helpful, concise, and warm. Max 150 words. No meta-commentary.\n"
-        "2. Stick to cooking, meal prep, ingredients, techniques, and the user's plan.\n"
-        "3. Use ONLY the USER CONTEXT below for plan-specific facts. Do not invent meals, "
-        "stats, or progress not listed there.\n"
-        "4. Respect the user's dietary restrictions and allergens; cross-check recipe "
-        "dietary/allergen fields when relevant.\n"
-        "5. To change or swap a planned recipe, tell them to use the Swap button on that "
-        "recipe card—do not claim you can modify the plan in chat.\n"
-        "6. If ACTIVE_PLAN is none, encourage generating their weekly plan first (button on "
-        "this page) before week-specific prep or scheduling advice. Generic cooking Q&A is OK.\n"
-    )
-
-    if mode == "analytics":
-        mode_rules = (
-            "Mode: analytics. Answer questions about progress and stats using ONLY the "
-            "context. If data is missing, say so briefly.\n"
-        )
-    else:
-        mode_rules = (
-            "Mode: coach. Answer the user's question using context when it helps personalize "
-            "the advice.\n"
-        )
-
-    prompt = (
-        f"{base_rules}{mode_rules}\n"
-        f"USER CONTEXT:\n{context}\n\n"
-        f"User question: {user_message}"
-    )
-    response = llm.invoke(prompt)
-    return response.content
+    prompt = build_coach_prompt(user_message, context, mode=mode)
+    return invoke_chat_model(llm, prompt)
 
 
 @router.post("/general/{user_id}", response_model=Dict[str, str])
-@limiter.limit("5/minute")
+@limiter.limit(CHAT_RATE_LIMIT)
+@limiter.limit(CHAT_RATE_LIMIT, key_func=get_user_id_rate_limit_key)
 async def casual_chat_endpoint(
     request: Request,
     user_id: uuid.UUID,
@@ -115,13 +90,17 @@ async def casual_chat_endpoint(
     """
     require_same_user(current_user, user_id)
     try:
+        ensure_user_text_allowed(chat_input.user_message)
         context = build_sodie_chat_context(db, current_user, chat_input.week_number)
         response_content = _get_sodie_coach_response(
             chat_input.user_message, context, mode="general_knowledge"
         )
         return {"response": response_content}
 
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("General chat failed user_id=%s", user_id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Error communicating with the general knowledge AI.",
@@ -129,7 +108,8 @@ async def casual_chat_endpoint(
 
 
 @router.post("/adaptive_chat/{user_id}", response_model=AdaptiveChatResponse)
-@limiter.limit("5/minute")
+@limiter.limit(CHAT_RATE_LIMIT)
+@limiter.limit(CHAT_RATE_LIMIT, key_func=get_user_id_rate_limit_key)
 async def adaptive_chat_endpoint(
     request: Request,
     user_id: uuid.UUID,
@@ -151,11 +131,17 @@ async def adaptive_chat_endpoint(
     """
     require_same_user(current_user, user_id)
     try:
+        ensure_user_text_allowed(chat_input.user_message)
         context = build_sodie_chat_context(db, current_user, chat_input.week_number)
 
-        print(f"[AdaptiveChat] Classifying message: {chat_input.user_message[:50]}...")
+        logger.info(
+            "AdaptiveChat classify user_id=%s week=%s msg_len=%s",
+            user_id,
+            chat_input.week_number,
+            len(chat_input.user_message),
+        )
         intent = classify_message_intent(chat_input.user_message)
-        print(f"[AdaptiveChat] Classified as: {intent}")
+        logger.info("AdaptiveChat intent=%s user_id=%s", intent, user_id)
 
         mode = "analytics" if intent == "analytics" else "general_knowledge"
         response_content = _get_sodie_coach_response(
@@ -166,19 +152,22 @@ async def adaptive_chat_endpoint(
             intent=intent if intent == "analytics" else "general_knowledge",
         )
 
-    except Exception as e:
-        print(f"[AdaptiveChat] Error: {e}")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("AdaptiveChat failed user_id=%s", user_id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Error processing chat message: {str(e)}",
+            detail="Error processing chat message.",
         )
 
 
 @router.post("/swap-recipe/{user_id}")
+@limiter.limit(SWAP_RATE_LIMIT, key_func=get_user_id_rate_limit_key)
 async def swap_recipe_endpoint(
+    request: Request,
     user_id: uuid.UUID,
     swap_request: SwapRecipeRequest = Body(...),
-    request: Request = None,
     plan_service: Annotated[WeeklyPlanService, Depends(get_weekly_plan_service)] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -199,6 +188,7 @@ async def swap_recipe_endpoint(
         500: Swap operation failed
     """
     require_same_user(current_user, user_id)
+    ensure_user_text_allowed(swap_request.swap_context)
     print(f"\n[SwapRecipe] Starting swap for user: {user_id}")
     print(f"[SwapRecipe] Recipe to replace: {swap_request.recipe_id_to_replace}")
     print(f"[SwapRecipe] Swap context: {swap_request.swap_context}")
@@ -506,10 +496,11 @@ The backend will handle inserting it into the meal plan."""
 
 
 @router.post("/generate/{user_id}", response_model=WeeklyPlanResponse)
+@limiter.limit(PLAN_GEN_RATE_LIMIT, key_func=get_user_id_rate_limit_key)
 async def generate_user_plan_endpoint(
+    request: Request,
     user_id: uuid.UUID,
     input: PlanGenerationInput = Body(...),
-    request: Request = None,
     plan_service: Annotated[WeeklyPlanService, Depends(get_weekly_plan_service)] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -521,6 +512,7 @@ async def generate_user_plan_endpoint(
     Uses runtime context for efficient token management.
     """
     require_same_user(current_user, user_id)
+    ensure_user_text_allowed(input.initial_intent)
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -729,9 +721,10 @@ async def check_next_week_eligibility(
 
 
 @router.post("/generate_next_week/{user_id}", response_model=WeeklyPlanResponse)
+@limiter.limit(PLAN_GEN_RATE_LIMIT, key_func=get_user_id_rate_limit_key)
 async def generate_next_week_plan(
+    request: Request,
     user_id: uuid.UUID,
-    request: Request = None,
     plan_service: Annotated[WeeklyPlanService, Depends(get_weekly_plan_service)] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),

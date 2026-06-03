@@ -27,10 +27,17 @@ def test_build_sodie_chat_context_with_plan(
     assert "dairy" in context
 
 
+@patch("app.routers.plan_agent.ensure_user_text_allowed")
 @patch("app.routers.plan_agent.ChatOpenAI")
 def test_adaptive_chat_includes_context_in_prompt(
-    mock_chat_openai, client, test_user, test_plan, test_recipe_progress
+    mock_chat_openai,
+    mock_moderation,
+    client,
+    test_user,
+    test_plan,
+    test_recipe_progress,
 ):
+    mock_moderation.return_value = None
     mock_llm = MagicMock()
     mock_response = MagicMock()
     mock_response.content = "Try the pasta first."
@@ -58,10 +65,17 @@ def test_adaptive_chat_includes_context_in_prompt(
     assert "ACTIVE_PLAN: week 1" in prompt
 
 
+@patch("app.routers.plan_agent.ensure_user_text_allowed")
 @patch("app.routers.plan_agent.ChatOpenAI")
 def test_adaptive_chat_analytics_mode(
-    mock_chat_openai, client, test_user, test_plan, test_recipe_progress
+    mock_chat_openai,
+    mock_moderation,
+    client,
+    test_user,
+    test_plan,
+    test_recipe_progress,
 ):
+    mock_moderation.return_value = None
     mock_llm = MagicMock()
     mock_response = MagicMock()
     mock_response.content = "You have 0 of 1 recipes completed."

@@ -8,10 +8,16 @@ This service determines whether a user's message requires:
 Note: Recipe modifications are now handled via dedicated swap endpoint, not chat.
 """
 
+import logging
 from typing import Literal
-from langchain_openai import ChatOpenAI
+
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+
 from app.constants import GENERATIVE_MODEL
+from app.services.sodie_llm import invoke_chat_model
+
+logger = logging.getLogger(__name__)
 
 IntentType = Literal["general_knowledge", "analytics"]
 
@@ -65,29 +71,27 @@ No explanation, no punctuation, just the classification."""
         user_prompt = f"User message: {user_message}"
 
         try:
-            response = self.llm.invoke(
+            raw = invoke_chat_model(
+                self.llm,
                 [
                     SystemMessage(content=system_prompt),
                     HumanMessage(content=user_prompt),
-                ]
+                ],
             )
-
-            # Extract and normalize the response
-            intent = response.content.strip().lower()
+            intent = raw.strip().lower()
 
             # Validate response
             if intent in ["general_knowledge", "analytics"]:
                 return intent  # type: ignore
             else:
-                # Default to general_knowledge if uncertain
-                print(
-                    f"[IntentClassifier] Unexpected response: {intent}, defaulting to general_knowledge"
+                logger.info(
+                    "IntentClassifier unexpected response=%r, defaulting to general_knowledge",
+                    intent,
                 )
                 return "general_knowledge"
 
         except Exception as e:
-            print(f"[IntentClassifier] Error during classification: {e}")
-            # Safe default: treat as general knowledge (cheapest option)
+            logger.warning("IntentClassifier error: %s", e)
             return "general_knowledge"
 
 

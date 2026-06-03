@@ -274,11 +274,21 @@ class ProgressSummary(BaseModel):
 
 
 class PlanGenerationInput(BaseModel):
-    initial_intent: str
+    initial_intent: str = Field(
+        ...,
+        min_length=1,
+        max_length=1000,
+        description="User intent for weekly plan generation",
+    )
 
 
 class GeneralChatInput(BaseModel):
-    user_message: str
+    user_message: str = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+        description="Message to Sodie coach chat",
+    )
     week_number: Optional[int] = None
 
 
