@@ -675,7 +675,7 @@ async def check_next_week_eligibility(
         return {
             "can_generate": False,
             "current_week": None,
-            "next_week": None,
+            "next_week": 1,
             "completion_status": "0/0",
             "message": "No plans exist yet. Generate your first week's plan.",
         }
