@@ -26,7 +26,16 @@ from app.services.ai_tasks import process_single_recipe_embedding_sync
 from app.services.recipe_image import attach_image_if_missing
 from app.database import SessionLocal
 from app.utils.uuid_helpers import str_to_uuid, strs_to_uuids
+from app.utils.ingredient_format import normalize_ingredient_pair
 from app.utils.recipe_formatters import instructions_json_to_text
+from app.utils.recipe_search_filters import (
+    allergen_filter_clause,
+    allowed_difficulties_for_skill,
+    allowed_validated_skills_for_skill,
+    dietary_filter_clause,
+    enrich_intent_query,
+)
+from app.utils.recipe_search_text import build_recipe_content_text
 
 load_dotenv()
 
@@ -77,6 +86,7 @@ class AdaptivePlannerService:
         skill_level: str = None,
         max_prep_time: int = None,
         max_cook_time: int = None,
+        preferred_portion_size: str = None,
     ) -> List[tuple]:
         """
         Executes a HYBRID (Vector Search + SQL Filter + User Preferences) query.
@@ -85,14 +95,30 @@ class AdaptivePlannerService:
         3. Filters by user preferences (cuisine, dietary, allergens, skill level, time constraints).
         Returns a list of (Recipe, similarity_score) tuples.
         """
-        query_vector = self.embeddings_client.embed_query(intent_query)
+        search_query = enrich_intent_query(
+            intent_query,
+            cuisine=cuisine,
+            dietary_restrictions=dietary_restrictions,
+            allergens=allergens,
+            skill_level=skill_level,
+            portion_size=preferred_portion_size,
+            max_prep_time=max_prep_time,
+            max_cook_time=max_cook_time,
+        )
+        query_vector = self.embeddings_client.embed_query(search_query)
         exclusion_str_list = [str(uid) for uid in exclude_ids]
+        bind_params: dict = {
+            "limit": limit,
+            "similarity_threshold": similarity_threshold,
+            "preferred_cuisine": cuisine or "",
+        }
 
         print(
             f"[get_recipe_candidates_hybrid] Excluding {len(exclusion_str_list)} recipes: {exclusion_str_list[:5]}..."
         )
         print(
-            f"[get_recipe_candidates_hybrid] User preferences - Cuisine: {cuisine}, Skill: {skill_level}"
+            f"[get_recipe_candidates_hybrid] Cuisine: {cuisine}, Skill: {skill_level}, "
+            f"Dietary: {dietary_restrictions}, Avoid allergens: {allergens}"
         )
 
         # Convert list to string format for pgvector - embed directly in SQL
@@ -110,36 +136,42 @@ class AdaptivePlannerService:
             )
             where_conditions.append(f"r.id NOT IN ({exclusion_placeholders})")
 
-        # Add cuisine filter (prefer user's cuisine but allow others with lower priority)
+        # Strict cuisine match; ORDER BY below is a no-op when filtered to one cuisine
         if cuisine:
             where_conditions.append(
-                f"(r.cuisine = '{cuisine}' OR r.cuisine IS NOT NULL)"
+                "LOWER(TRIM(r.cuisine)) = LOWER(TRIM(:preferred_cuisine))"
             )
 
-        # Add skill level filter (match or easier difficulty)
+        dietary_sql, dietary_params = dietary_filter_clause(dietary_restrictions)
+        if dietary_sql:
+            where_conditions.append(dietary_sql)
+            bind_params.update(dietary_params)
+
+        allergen_sql, allergen_params = allergen_filter_clause(allergens)
+        if allergen_sql:
+            where_conditions.append(allergen_sql)
+            bind_params.update(allergen_params)
+
         if skill_level:
-            skill_map = {
-                "beginner": ["easy"],
-                "intermediate": ["easy", "medium"],
-                "advanced": ["easy", "medium", "hard"],
-            }
-            allowed_difficulties = skill_map.get(
-                skill_level, ["easy", "medium", "hard"]
-            )
-            diff_list = "', '".join(allowed_difficulties)
+            allowed_diff = allowed_difficulties_for_skill(skill_level)
+            allowed_skills = allowed_validated_skills_for_skill(skill_level)
+            diff_list = "', '".join(allowed_diff)
+            skill_list = "', '".join(allowed_skills)
             where_conditions.append(
-                f"(r.difficulty IN ('{diff_list}') OR r.difficulty IS NULL)"
+                f"(r.difficulty IN ('{diff_list}') "
+                f"OR r.skill_level_validated IN ('{skill_list}'))"
             )
 
-        # Add time constraints
         if max_prep_time:
             where_conditions.append(
-                f"(r.prep_time_minutes <= {max_prep_time} OR r.prep_time_minutes IS NULL)"
+                "r.prep_time_minutes IS NOT NULL AND r.prep_time_minutes <= :max_prep_time"
             )
+            bind_params["max_prep_time"] = max_prep_time
         if max_cook_time:
             where_conditions.append(
-                f"(r.cook_time_minutes <= {max_cook_time} OR r.cook_time_minutes IS NULL)"
+                "r.cook_time_minutes IS NOT NULL AND r.cook_time_minutes <= :max_cook_time"
             )
+            bind_params["max_cook_time"] = max_cook_time
 
         where_clause = " AND ".join(where_conditions)
 
@@ -162,14 +194,7 @@ class AdaptivePlannerService:
             LIMIT :limit;
         """)
 
-        result = self.db.execute(
-            raw_sql_query,
-            {
-                "limit": limit,
-                "similarity_threshold": similarity_threshold,
-                "preferred_cuisine": cuisine or "",
-            },
-        ).all()
+        result = self.db.execute(raw_sql_query, bind_params).all()
 
         candidate_ids = [row[0] for row in result]
         recipes_by_id = {
@@ -248,6 +273,7 @@ def get_recipe_candidates(intent_query: str) -> str:
             skill_level=context.skill_level,
             max_prep_time=context.max_prep_time_minutes,
             max_cook_time=context.max_cook_time_minutes,
+            preferred_portion_size=context.preferred_portion_size,
         )
 
         # Return the results as a string summary for the LLM to process
@@ -260,7 +286,11 @@ def get_recipe_candidates(intent_query: str) -> str:
         # Format the output into a clean string for the LLM's context window
         output_summary = "\n--- Recipe Candidates ---\n"
         for i, (recipe, score) in enumerate(results):
-            output_summary += f"{i+1}. ID: {recipe.id}, Name: {recipe.name}, Difficulty: {getattr(recipe, 'difficulty', 'N/A')}, Score: {score:.3f}\n"
+            output_summary += (
+                f"{i+1}. ID: {recipe.id}, Name: {recipe.name}, "
+                f"Cuisine: {getattr(recipe, 'cuisine', 'N/A')}, "
+                f"Difficulty: {getattr(recipe, 'difficulty', 'N/A')}, Score: {score:.3f}\n"
+            )
 
         # Update runtime state with found recipe IDs
         found_ids = [str(recipe.id) for recipe, _ in results]
@@ -399,10 +429,17 @@ def generate_and_save_new_recipe(recipe_description: str) -> str:
       RECIPE DETAILS:
       - Name: Simple dish title only (what you would see on a menu). No "Beginner's",
         "Easy", "Mastery", "Ultimate", or similar — keep difficulty in the difficulty field.
-      - Ingredients: Provide a list where EACH ingredient has TWO fields:
-        * "name": The ingredient name (e.g., "Cashew nuts", "Onions", "Cumin seeds")
-        * "measure": The quantity/measurement (e.g., "12", "½ tbsp", "3 sliced thinly")
+      - Ingredients: Each item has "name" (food only) and "measure" (amount/unit/prep).
+        * name: food only — e.g. "bell pepper", "garlic", "salt" (not "sliced bell pepper")
+        * measure: quantity/unit/prep — e.g. "2 cups", "1 sliced", "to taste" for salt/pepper
       - Instructions: Must be step-by-step and clear.
+      - dietary_tags, allergens, portion_size, prep_time_minutes, cook_time_minutes,
+        and skill_level_validated are REQUIRED in the JSON (same as seeded recipes).
+
+      USER DIETARY PREFERENCES (honor when possible): {json.dumps(context.dietary_restrictions or [])}
+      USER ALLERGENS TO AVOID (never include): {json.dumps(context.allergens or [])}
+      PREFERRED CUISINE (from profile): {context.cuisine or "match the request above"}
+      PREFERRED PORTION SIZE: {context.preferred_portion_size or "estimate sensibly"}
 
       USER SPECIFIC REQUEST: {recipe_description}
     """
@@ -427,10 +464,10 @@ def generate_and_save_new_recipe(recipe_description: str) -> str:
             bind=engine
         ) as db:  # Use direct engine bind for a transactional script
             # Convert ingredients list to JSON string in the correct format
-            ingredients_list = [
-                {"name": item.name, "measure": item.measure}
-                for item in generated_recipe_data.ingredients
-            ]
+            ingredients_list = []
+            for item in generated_recipe_data.ingredients:
+                name, measure = normalize_ingredient_pair(item.name, item.measure)
+                ingredients_list.append({"name": name, "measure": measure})
             ingredients_json = json.dumps(ingredients_list)
 
             # Create content_text for embedding generation (flatten ingredients for text)
@@ -449,18 +486,36 @@ def generate_and_save_new_recipe(recipe_description: str) -> str:
             instructions_json = json.dumps(instructions_list)
             instructions_text = instructions_json_to_text(instructions_list)
 
-            content_text = f"{generated_recipe_data.name} {generated_recipe_data.cuisine} {ingredients_text} {instructions_text}"
+            content_text = build_recipe_content_text(
+                name=generated_recipe_data.name,
+                cuisine=generated_recipe_data.cuisine,
+                ingredients_text=ingredients_text,
+                instructions_text=instructions_text,
+                dietary_tags=generated_recipe_data.dietary_tags,
+                allergens=generated_recipe_data.allergens,
+                portion_size=generated_recipe_data.portion_size,
+                prep_time_minutes=generated_recipe_data.prep_time_minutes,
+                cook_time_minutes=generated_recipe_data.cook_time_minutes,
+                skill_level_validated=generated_recipe_data.skill_level_validated,
+                difficulty=generated_recipe_data.difficulty,
+            )
 
-            # Create the final recipe object
+            # Create the final recipe object (align with seed_recipes / Recipe columns)
             new_recipe = Recipe(
                 name=generated_recipe_data.name,
                 cuisine=generated_recipe_data.cuisine,
-                ingredients=ingredients_json,  # Store as JSON string
-                instructions=instructions_json,  # Store structured instructions as JSON
+                ingredients=ingredients_json,
+                instructions=instructions_json,
                 difficulty=generated_recipe_data.difficulty,
-                is_ai_generated=True,  # Flag this as an LLM creation
-                external_id=f"ai-generated-{uuid.uuid4()}",  # Unique external_id per recipe
-                content_text=content_text,  # Add content_text for embeddings
+                dietary_tags=json.dumps(generated_recipe_data.dietary_tags),
+                allergens=json.dumps(generated_recipe_data.allergens),
+                portion_size=generated_recipe_data.portion_size,
+                prep_time_minutes=generated_recipe_data.prep_time_minutes,
+                cook_time_minutes=generated_recipe_data.cook_time_minutes,
+                skill_level_validated=generated_recipe_data.skill_level_validated,
+                is_ai_generated=True,
+                external_id=f"ai-generated-{uuid.uuid4()}",
+                content_text=content_text,
             )
 
             db.add(new_recipe)
@@ -473,7 +528,11 @@ def generate_and_save_new_recipe(recipe_description: str) -> str:
             print("[TOOL] Generating embeddings for vector search...")
             process_single_recipe_embedding_sync(new_recipe.id, db)
 
-            image_url = attach_image_if_missing(new_recipe, db)
+            image_url = attach_image_if_missing(
+                new_recipe,
+                db,
+                user_dietary_restrictions=context.dietary_restrictions,
+            )
             if image_url:
                 print(f"[TOOL] Attached Pexels image: {image_url}")
             else:

@@ -15,6 +15,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.models import Recipe
+from app.utils.recipe_search_filters import normalize_preference_tags
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,86 @@ _MARKETING_PREFIX_RE = re.compile(
     r"^((?:beginner|beginners|easy|simple|classic|ultimate|perfect|homestyle|"
     r"mastery|quick|healthy|delicious|amazing)\s*['']?s?\s+)+",
     re.IGNORECASE,
+)
+
+# Alt-text tokens that clash with common dietary tags (stock photos are often mislabeled).
+_DIETARY_ALT_CONFLICTS: dict[str, frozenset[str]] = {
+    "vegetarian": frozenset(
+        {
+            "bacon",
+            "beef",
+            "chicken",
+            "crab",
+            "egg",
+            "eggs",
+            "fish",
+            "ham",
+            "lamb",
+            "lobster",
+            "meat",
+            "pork",
+            "salmon",
+            "sausage",
+            "seafood",
+            "shrimp",
+            "steak",
+            "tuna",
+            "turkey",
+        }
+    ),
+    "vegan": frozenset(
+        {
+            "bacon",
+            "beef",
+            "butter",
+            "cheese",
+            "chicken",
+            "cream",
+            "crab",
+            "dairy",
+            "egg",
+            "eggs",
+            "fish",
+            "ham",
+            "honey",
+            "lamb",
+            "lobster",
+            "meat",
+            "milk",
+            "pork",
+            "salmon",
+            "sausage",
+            "seafood",
+            "shrimp",
+            "steak",
+            "tuna",
+            "turkey",
+            "yogurt",
+        }
+    ),
+    "pescatarian": frozenset(
+        {
+            "bacon",
+            "beef",
+            "chicken",
+            "ham",
+            "lamb",
+            "meat",
+            "pork",
+            "sausage",
+            "steak",
+            "turkey",
+        }
+    ),
+}
+
+# Strongest diet label to bias Pexels search (one primary term keeps queries short).
+_DIETARY_SEARCH_PRIORITY = (
+    "vegan",
+    "vegetarian",
+    "pescatarian",
+    "gluten-free",
+    "dairy-free",
 )
 
 _PANTRY_INGREDIENT_WORDS = frozenset(
@@ -112,26 +193,82 @@ def main_ingredient_keywords(ingredients_json: str, *, max_count: int = 2) -> Li
     return keywords
 
 
-def build_search_queries(recipe: Recipe) -> List[str]:
+def _parse_recipe_dietary_tags(recipe: Recipe) -> List[str]:
+    raw = getattr(recipe, "dietary_tags", None)
+    if not raw or not str(raw).strip():
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return normalize_preference_tags([str(t) for t in parsed])
+
+
+def merge_dietary_context(
+    recipe: Recipe, user_dietary_restrictions: Optional[List[str]] = None
+) -> List[str]:
+    """Recipe tags plus user profile restrictions (union, normalized)."""
+    combined = _parse_recipe_dietary_tags(recipe) + normalize_preference_tags(
+        user_dietary_restrictions
+    )
+    return normalize_preference_tags(combined)
+
+
+def primary_dietary_search_term(dietary_tags: List[str]) -> Optional[str]:
+    """Single stock-photo keyword (e.g. vegetarian) for Pexels queries."""
+    tag_set = set(dietary_tags)
+    for term in _DIETARY_SEARCH_PRIORITY:
+        if term in tag_set:
+            return term
+    return dietary_tags[0] if dietary_tags else None
+
+
+def _alt_conflicts_dietary(alt: str, dietary_tags: List[str]) -> bool:
+    if not dietary_tags or not alt:
+        return False
+    alt_tokens = _tokenize(alt)
+    for tag in dietary_tags:
+        conflicts = _DIETARY_ALT_CONFLICTS.get(tag)
+        if conflicts and alt_tokens & conflicts:
+            return True
+    return False
+
+
+def build_search_queries(
+    recipe: Recipe, *, dietary_tags: Optional[List[str]] = None
+) -> List[str]:
     raw_name = (recipe.name or "").strip()
     search_name = searchable_recipe_name(raw_name)
     cuisine = (recipe.cuisine or "").strip()
     ingredients = main_ingredient_keywords(recipe.ingredients or "[]", max_count=2)
+    diet = (
+        dietary_tags if dietary_tags is not None else _parse_recipe_dietary_tags(recipe)
+    )
+    diet_term = primary_dietary_search_term(diet)
 
     queries: List[str] = []
 
+    def with_diet(base: str) -> None:
+        if not base:
+            return
+        queries.append(base)
+        if diet_term:
+            queries.append(f"{diet_term} {base}")
+
     if search_name:
-        queries.append(f"{search_name} food")
+        with_diet(f"{search_name} food")
     if search_name and cuisine:
-        queries.append(f"{search_name} {cuisine}")
+        with_diet(f"{search_name} {cuisine}")
     if search_name and ingredients:
-        queries.append(f"{search_name} {' '.join(ingredients)}")
+        with_diet(f"{search_name} {' '.join(ingredients)}")
     if cuisine and ingredients:
-        queries.append(f"{cuisine} {' '.join(ingredients)} food")
+        with_diet(f"{cuisine} {' '.join(ingredients)} food")
     elif cuisine and len(ingredients) == 1:
-        queries.append(f"{cuisine} {ingredients[0]} food")
+        with_diet(f"{cuisine} {ingredients[0]} food")
     elif cuisine:
-        queries.append(f"{cuisine} food")
+        with_diet(f"{cuisine} food")
 
     seen: set[str] = set()
     unique: List[str] = []
@@ -140,17 +277,27 @@ def build_search_queries(recipe: Recipe) -> List[str]:
         if key not in seen:
             seen.add(key)
             unique.append(q)
+
+    if diet_term:
+        diet_first = [q for q in unique if q.lower().startswith(diet_term)]
+        rest = [q for q in unique if q not in diet_first]
+        return diet_first + rest
     return unique
 
 
-def _score_photo_alt(alt: str, recipe_name: str) -> int:
+def _score_photo_alt(
+    alt: str, recipe_name: str, dietary_tags: Optional[List[str]] = None
+) -> int:
     if not alt:
         return 0
     name_tokens = _tokenize(searchable_recipe_name(recipe_name))
     alt_tokens = _tokenize(alt)
-    if not name_tokens:
-        return 0
-    return len(name_tokens & alt_tokens)
+    score = len(name_tokens & alt_tokens) if name_tokens else 0
+    if dietary_tags:
+        for tag in dietary_tags:
+            if tag.replace("-", "") in alt.lower() or tag in alt_tokens:
+                score += 2
+    return score
 
 
 def _is_allowed_pexels_url(url: str) -> bool:
@@ -161,15 +308,36 @@ def _is_allowed_pexels_url(url: str) -> bool:
     return parsed.scheme == "https" and parsed.netloc == PEXELS_IMAGE_HOST
 
 
-def _pick_photo_url(photos: List[dict[str, Any]], recipe_name: str) -> Optional[str]:
+def _pick_photo_url(
+    photos: List[dict[str, Any]],
+    recipe_name: str,
+    dietary_tags: Optional[List[str]] = None,
+) -> Optional[str]:
     if not photos:
         return None
 
-    best = photos[0]
-    best_score = _score_photo_alt(str(best.get("alt") or ""), recipe_name)
+    candidates = photos
+    if dietary_tags:
+        filtered = [
+            p
+            for p in photos
+            if not _alt_conflicts_dietary(str(p.get("alt") or ""), dietary_tags)
+        ]
+        if filtered:
+            candidates = filtered
+        else:
+            logger.info(
+                "All Pexels results conflict with dietary_tags=%s for name=%r",
+                dietary_tags,
+                recipe_name,
+            )
+            return None
 
-    for photo in photos[1:]:
-        score = _score_photo_alt(str(photo.get("alt") or ""), recipe_name)
+    best = candidates[0]
+    best_score = _score_photo_alt(str(best.get("alt") or ""), recipe_name, dietary_tags)
+
+    for photo in candidates[1:]:
+        score = _score_photo_alt(str(photo.get("alt") or ""), recipe_name, dietary_tags)
         if score > best_score:
             best = photo
             best_score = score
@@ -203,7 +371,9 @@ def _search_pexels(query: str, api_key: str) -> List[dict[str, Any]]:
     return photos if isinstance(photos, list) else []
 
 
-def resolve_recipe_image(recipe: Recipe) -> Optional[str]:
+def resolve_recipe_image(
+    recipe: Recipe, *, user_dietary_restrictions: Optional[List[str]] = None
+) -> Optional[str]:
     """
     Return a Pexels CDN URL for the recipe, or None if disabled / not found.
     """
@@ -213,8 +383,9 @@ def resolve_recipe_image(recipe: Recipe) -> Optional[str]:
 
     api_key = os.getenv("PEXELS_API_KEY", "").strip()
     recipe_name = recipe.name or ""
+    dietary_tags = merge_dietary_context(recipe, user_dietary_restrictions)
 
-    for query in build_search_queries(recipe):
+    for query in build_search_queries(recipe, dietary_tags=dietary_tags):
         try:
             photos = _search_pexels(query, api_key)
         except httpx.HTTPError as exc:
@@ -226,7 +397,7 @@ def resolve_recipe_image(recipe: Recipe) -> Optional[str]:
             )
             continue
 
-        url = _pick_photo_url(photos, recipe_name)
+        url = _pick_photo_url(photos, recipe_name, dietary_tags)
         if url:
             logger.info(
                 "Resolved image recipe_id=%s query=%r url=%s",
@@ -241,7 +412,11 @@ def resolve_recipe_image(recipe: Recipe) -> Optional[str]:
 
 
 def attach_recipe_image(
-    recipe: Recipe, db: Session, *, force: bool = False
+    recipe: Recipe,
+    db: Session,
+    *,
+    force: bool = False,
+    user_dietary_restrictions: Optional[List[str]] = None,
 ) -> Optional[str]:
     """
     Set recipe.image_url from Pexels.
@@ -254,7 +429,9 @@ def attach_recipe_image(
         return recipe.image_url
 
     previous = recipe.image_url
-    url = resolve_recipe_image(recipe)
+    url = resolve_recipe_image(
+        recipe, user_dietary_restrictions=user_dietary_restrictions
+    )
     if url:
         recipe.image_url = url
         db.add(recipe)
@@ -265,6 +442,16 @@ def attach_recipe_image(
     return previous if force and previous else None
 
 
-def attach_image_if_missing(recipe: Recipe, db: Session) -> Optional[str]:
+def attach_image_if_missing(
+    recipe: Recipe,
+    db: Session,
+    *,
+    user_dietary_restrictions: Optional[List[str]] = None,
+) -> Optional[str]:
     """Set recipe.image_url from Pexels when empty. Returns final URL or None."""
-    return attach_recipe_image(recipe, db, force=False)
+    return attach_recipe_image(
+        recipe,
+        db,
+        force=False,
+        user_dietary_restrictions=user_dietary_restrictions,
+    )

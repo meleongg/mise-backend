@@ -24,6 +24,7 @@ from app.database import engine
 from app.models import Recipe
 from app.constants import THEMEALDB_BASE_URL, GENERATIVE_MODEL, EMBEDDING_MODEL
 from app.utils.recipe_formatters import instructions_json_to_text
+from app.utils.recipe_search_text import build_recipe_content_text
 
 
 class InstructionStep(BaseModel):
@@ -187,14 +188,30 @@ REQUIRED OUTPUT (all fields mandatory):
 
 
 def generate_content_text(
-    name: str, cuisine: str, ingredients: List[dict], instructions_json: List[dict]
+    name: str,
+    cuisine: str,
+    ingredients: List[dict],
+    instructions_json: List[dict],
+    metadata: RecipeMetadata,
 ) -> str:
-    """Generate content_text for embedding"""
+    """Generate content_text for embedding (includes augmented metadata)."""
     ingredients_text = " ".join(
         [f"{item['name']} {item['measure']}" for item in ingredients]
     )
     instructions_text = instructions_json_to_text(instructions_json)
-    return f"{name} {cuisine} {ingredients_text} {instructions_text}"
+    return build_recipe_content_text(
+        name=name,
+        cuisine=cuisine,
+        ingredients_text=ingredients_text,
+        instructions_text=instructions_text,
+        dietary_tags=metadata.dietary_tags,
+        allergens=metadata.allergens,
+        portion_size=metadata.portion_size,
+        prep_time_minutes=metadata.prep_time_minutes,
+        cook_time_minutes=metadata.cook_time_minutes,
+        skill_level_validated=metadata.skill_level_validated,
+        difficulty=metadata.skill_level_validated,
+    )
 
 
 async def process_single_recipe(meal_id: str) -> bool:
@@ -254,6 +271,7 @@ async def process_single_recipe(meal_id: str) -> bool:
             meal_data.get("strArea"),
             ingredients,
             instructions_json,
+            metadata,
         )
 
         # Generate embedding

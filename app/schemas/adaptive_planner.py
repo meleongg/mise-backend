@@ -44,10 +44,16 @@ class IngredientItem(BaseModel):
     """A single ingredient with its name and measurement."""
 
     name: str = Field(
-        description="The name of the ingredient (e.g., 'Cashew nuts', 'Onions')"
+        description=(
+            "Food item only, lowercase preferred (e.g. 'bell pepper', 'garlic', 'salt'). "
+            "Do NOT put quantity, 'to taste', or prep (sliced/minced) in name."
+        )
     )
     measure: str = Field(
-        description="The measurement or quantity (e.g., '12', '½ tbsp', '3 sliced thinly')"
+        description=(
+            "Quantity, unit, and optional prep (e.g. '2 cups', '1 lb', '2 cloves, minced'). "
+            "Use exactly 'to taste' for salt/pepper when unspecified — never put 'to taste' in name."
+        )
     )
 
 
@@ -81,5 +87,35 @@ class NewRecipeSchema(BaseModel):
         description="Step-by-step cooking instructions as a structured list. Each step should have a number and clear text."
     )
     difficulty: Literal["easy", "medium", "hard"] = Field(
-        description="The estimated difficulty level."
+        description="The estimated difficulty level (easy, medium, hard)."
+    )
+    dietary_tags: List[str] = Field(
+        description=(
+            "Applicable dietary tags. Examples: vegetarian, vegan, gluten-free, "
+            "dairy-free, pescatarian, keto. Use ['omnivore'] if none apply."
+        ),
+        min_length=1,
+    )
+    allergens: List[str] = Field(
+        description=(
+            "Allergens present in the recipe (nuts, dairy, eggs, wheat, shellfish, etc.). "
+            "Use [] only if truly none."
+        ),
+    )
+    portion_size: str = Field(
+        description="Serving size, e.g. '4 servings' or '2-3 servings'."
+    )
+    prep_time_minutes: int = Field(
+        description="Active prep time in minutes (chopping, mixing).",
+        ge=1,
+    )
+    cook_time_minutes: int = Field(
+        description="Cook/bake time in minutes. Use 0 for no-cook dishes.",
+        ge=0,
+    )
+    skill_level_validated: Literal["beginner", "medium", "advanced"] = Field(
+        description=(
+            "Skill level for techniques required: beginner, medium, or advanced. "
+            "Should align with difficulty (easy→beginner, medium→medium, hard→advanced)."
+        ),
     )

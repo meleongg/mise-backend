@@ -4,6 +4,7 @@ from sqlalchemy import select
 from langchain_openai import OpenAIEmbeddings
 from app.models import Recipe
 from app.constants import EMBEDDING_MODEL
+from app.utils.recipe_search_text import content_text_from_recipe
 
 
 def process_single_recipe_embedding_sync(recipe_id: uuid.UUID, db: Session):
@@ -17,12 +18,18 @@ def process_single_recipe_embedding_sync(recipe_id: uuid.UUID, db: Session):
     # fetch recipe data
     recipe = db.scalars(select(Recipe).filter(Recipe.id == recipe_id)).first()
 
-    if not recipe or not recipe.content_text:
+    if not recipe:
+        print(f"Vectorization skipped: Recipe {recipe_id} not found.")
+        return
+
+    content_text = content_text_from_recipe(recipe)
+    if not content_text:
         print(f"Vectorization skipped: Recipe {recipe_id} content missing.")
         return
 
-    # generate the vector
-    vector_list = embeddings_client.embed_documents([recipe.content_text])
+    recipe.content_text = content_text
+
+    vector_list = embeddings_client.embed_documents([content_text])
     vector = vector_list[0]
 
     # update db record with new vector

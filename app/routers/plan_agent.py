@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import uuid
 import os
 from dotenv import load_dotenv
@@ -852,11 +853,19 @@ async def generate_next_week_plan(
         # Initialize runtime context for the agent
         print("[PHASE 1: RUNTIME CONTEXT INITIALIZED FOR NEXT WEEK GENERATION]")
         runtime_context = PlannerContext(
-            user_id=str(user.id),
+            user_id=user.id,
             user_goal=user.user_goal,
             frequency=user.frequency,
-            exclude_ids=exclude_ids_str,
+            exclude_ids=exclusion_ids,
             skill_level=adapted_skill,
+            cuisine=getattr(user, "cuisine", None),
+            dietary_restrictions=json.loads(
+                getattr(user, "dietary_restrictions", "[]") or "[]"
+            ),
+            allergens=json.loads(getattr(user, "allergens", "[]") or "[]"),
+            preferred_portion_size=getattr(user, "preferred_portion_size", None),
+            max_prep_time_minutes=getattr(user, "max_prep_time_minutes", None),
+            max_cook_time_minutes=getattr(user, "max_cook_time_minutes", None),
         )
         runtime_state = PlannerRuntimeState(
             candidate_recipes=[],
