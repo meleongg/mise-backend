@@ -37,3 +37,14 @@ THEMEALDB_BASE_URL = "https://www.themealdb.com/api/json/v1/1"
 # Recipe swap configuration
 MAX_SWAPS_PER_WEEK = 3
 RECIPE_COOLDOWN_DAYS = 14
+RECIPE_COOLDOWN_DAYS_SOONER = 7
+RECIPE_COOLDOWN_BY_PREFERENCE = {
+    "standard": RECIPE_COOLDOWN_DAYS,
+    "sooner": RECIPE_COOLDOWN_DAYS_SOONER,
+}
+
+
+def get_recipe_cooldown_days(preference: str | None) -> int:
+    if preference == "sooner":
+        return RECIPE_COOLDOWN_DAYS_SOONER
+    return RECIPE_COOLDOWN_DAYS

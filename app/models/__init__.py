@@ -79,6 +79,9 @@ class User(Base):
     max_cook_time_minutes = Column(
         Integer, nullable=True
     )  # Maximum acceptable cook time in minutes
+    recipe_repeat_preference = Column(
+        String(20), nullable=False, default="standard"
+    )  # standard (14d cooldown) or sooner (7d)
     hashed_password = Column(
         String, nullable=False
     )  # Store hashed password for authentication

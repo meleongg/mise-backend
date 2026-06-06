@@ -95,6 +95,11 @@ class UserUpdate(BaseModel):
     max_cook_time_minutes: Optional[int] = Field(
         None, ge=0, description="Maximum acceptable cook time"
     )
+    recipe_repeat_preference: Optional[str] = Field(
+        None,
+        pattern="^(standard|sooner)$",
+        description="How long before a cooked recipe can reappear in plans",
+    )
 
 
 class UpdateAccountDetails(BaseModel):
@@ -142,6 +147,7 @@ class UserResponse(BaseModel):
     preferred_portion_size: Optional[str] = None
     max_prep_time_minutes: Optional[int] = None
     max_cook_time_minutes: Optional[int] = None
+    recipe_repeat_preference: str = "standard"
     created_at: datetime
 
     model_config = {"from_attributes": True}

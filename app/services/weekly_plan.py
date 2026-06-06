@@ -6,7 +6,7 @@ from app.models import User, WeeklyPlan, UserRecipeProgress, Recipe, RecipeSugge
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import select
 from fastapi import HTTPException
-from app.constants import RECIPE_COOLDOWN_DAYS
+from app.constants import get_recipe_cooldown_days
 
 
 # Recipe Schedule Helper Functions
@@ -101,9 +101,10 @@ class WeeklyPlanService:
         ).all()
         exclusion_ids.extend(hard_recipes)
 
-        cooldown_cutoff = datetime.now(timezone.utc) - timedelta(
-            days=RECIPE_COOLDOWN_DAYS
+        cooldown_days = get_recipe_cooldown_days(
+            getattr(user, "recipe_repeat_preference", None)
         )
+        cooldown_cutoff = datetime.now(timezone.utc) - timedelta(days=cooldown_days)
         recent_suggestions = db.scalars(
             select(RecipeSuggestion.recipe_id).filter(
                 (RecipeSuggestion.user_id == user.id)
