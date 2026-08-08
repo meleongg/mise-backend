@@ -25,7 +25,7 @@ from app.services.weekly_plan import (
     parse_recipe_schedule,
     swap_recipe_in_schedule,
     validate_recipe_can_be_swapped,
-    cleanup_swapped_recipe_progress,
+    replace_swapped_recipe_progress,
 )
 from app.agents.planner_agent import get_agent_with_checkpointer, PlanState
 from app.schemas import (
@@ -445,6 +445,14 @@ The backend will handle inserting it into the meal plan."""
                 db=db,
             )
 
+            replace_swapped_recipe_progress(
+                user_id=user_id,
+                old_recipe_id=swap_request.recipe_id_to_replace,
+                new_recipe_id=uuid.UUID(new_recipe_id_str),
+                week_number=target_plan.week_number,
+                db=db,
+            )
+
             # Increment swap count for this week
             target_plan.swap_count = current_swap_count + 1
             print(f"[SwapRecipe] Incremented swap_count to {target_plan.swap_count}")
@@ -462,16 +470,7 @@ The backend will handle inserting it into the meal plan."""
 
         print(f"[SwapRecipe] ✅ Swap completed: {old_recipe.name} → {new_recipe.name}")
 
-        # 13. Delete old UserRecipeProgress entry
-        cleanup_swapped_recipe_progress(
-            user_id=user_id,
-            old_recipe_id=swap_request.recipe_id_to_replace,
-            week_number=target_plan.week_number,
-            db=db,
-        )
-        db.commit()
-
-        # 14. Return both old and new recipe details
+        # 13. Return both old and new recipe details
         return SwapRecipeResponse(
             success=True,
             old_recipe=RecipeResponse.model_validate(old_recipe),
@@ -513,14 +512,28 @@ async def generate_user_plan_endpoint(
     Uses runtime context for efficient token management.
     """
     require_same_user(current_user, user_id)
-    ensure_user_text_allowed(input.initial_intent)
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
 
-    # Always generate/regenerate week 1 for initial plan generation
+    # Generate week 1 initially. Resetting it requires an explicit acknowledgement.
     week_number = 1
+    existing_plan = (
+        db.query(WeeklyPlan)
+        .filter(WeeklyPlan.user_id == user.id, WeeklyPlan.week_number == week_number)
+        .first()
+    )
+    if existing_plan and not input.confirm_regeneration:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Week 1 already exists. Explicit confirmation is required: set "
+                "confirm_regeneration to true to reset the plan and its progress."
+            ),
+        )
+
+    ensure_user_text_allowed(input.initial_intent)
 
     exclusion_ids: List[uuid.UUID] = plan_service.get_user_exclusion_ids(
         user, db, current_week=week_number
