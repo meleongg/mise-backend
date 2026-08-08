@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import uuid
 
-from app.models import Recipe, RecipeSuggestion, User
+from app.models import Recipe, RecipeSuggestion, User, UserRecipeProgress
 from app.services.weekly_plan import WeeklyPlanService
 
 
@@ -106,3 +106,53 @@ def test_get_user_exclusion_ids_uses_standard_preference_by_default(db):
     exclusion_ids = service.get_user_exclusion_ids(user, db)
 
     assert borderline_recipe_id in exclusion_ids
+
+
+def test_get_user_exclusion_ids_includes_recently_completed_recipes(db):
+    """Recent completions stay excluded even when suggestion history is missing."""
+    service = WeeklyPlanService()
+    user = User(
+        id=uuid.uuid4(),
+        email="completed@example.com",
+        first_name="Completed",
+        last_name="User",
+        cuisine="Italian",
+        frequency=3,
+        skill_level="beginner",
+        user_goal="confidence",
+        hashed_password="hash",
+        recipe_repeat_preference="standard",
+    )
+    db.add(user)
+    db.flush()
+
+    just_completed_recipe_id = uuid.uuid4()
+    older_completed_recipe_id = uuid.uuid4()
+    _seed_recipe(db, just_completed_recipe_id)
+    _seed_recipe(db, older_completed_recipe_id)
+    now = datetime.now(timezone.utc)
+
+    db.add_all(
+        [
+            UserRecipeProgress(
+                user_id=user.id,
+                recipe_id=just_completed_recipe_id,
+                week_number=1,
+                status="completed",
+                completed_at=now - timedelta(days=1),
+            ),
+            UserRecipeProgress(
+                user_id=user.id,
+                recipe_id=older_completed_recipe_id,
+                week_number=1,
+                status="completed",
+                completed_at=now - timedelta(days=15),
+            ),
+        ]
+    )
+    db.flush()
+
+    exclusion_ids = service.get_user_exclusion_ids(user, db)
+
+    assert just_completed_recipe_id in exclusion_ids
+    assert older_completed_recipe_id not in exclusion_ids

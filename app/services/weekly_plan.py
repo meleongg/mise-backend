@@ -90,6 +90,7 @@ class WeeklyPlanService:
         Includes:
         1. Recipes rated as too difficult (difficulty_rating >= 4)
         2. Recipes suggested within the cooldown window (plan + swap)
+        3. Recipes completed within the cooldown window
         """
         exclusion_ids = []
 
@@ -112,6 +113,19 @@ class WeeklyPlanService:
             )
         ).all()
         exclusion_ids.extend(recent_suggestions)
+
+        # Completion history is authoritative even when a plan predates
+        # RecipeSuggestion tracking or its suggestion row is unavailable.
+        # This keeps a just-completed dish out of both generated plans and swaps.
+        recent_completions = db.scalars(
+            select(UserRecipeProgress.recipe_id).filter(
+                (UserRecipeProgress.user_id == user.id)
+                & (UserRecipeProgress.status == "completed")
+                & (UserRecipeProgress.completed_at.isnot(None))
+                & (UserRecipeProgress.completed_at >= cooldown_cutoff)
+            )
+        ).all()
+        exclusion_ids.extend(recent_completions)
 
         # Remove duplicates and return
         return list(set(exclusion_ids))
