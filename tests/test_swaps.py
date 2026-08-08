@@ -1,3 +1,9 @@
+import uuid
+
+from app.models import UserRecipeProgress
+from app.services.weekly_plan import replace_swapped_recipe_progress
+
+
 def test_swap_limit_check(client, test_user, test_plan):
     """Test that swap endpoint enforces swap limit"""
     # First, ensure the plan exists
@@ -22,3 +28,43 @@ def test_get_next_week_eligibility(client, test_user):
     data = response.json()
     assert "can_generate" in data
     assert "current_week" in data
+
+
+def test_replace_swapped_recipe_progress_replaces_old_progress_with_new_recipe(
+    db, test_user, test_recipes
+):
+    old_recipe_id = test_recipes[0].id
+    new_recipe_id = test_recipes[1].id
+    db.add(
+        UserRecipeProgress(
+            id=uuid.uuid4(),
+            user_id=test_user.id,
+            recipe_id=old_recipe_id,
+            week_number=1,
+            status="in_progress",
+        )
+    )
+    db.flush()
+
+    replace_swapped_recipe_progress(
+        user_id=test_user.id,
+        old_recipe_id=old_recipe_id,
+        new_recipe_id=new_recipe_id,
+        week_number=1,
+        db=db,
+    )
+    db.flush()
+
+    progress = (
+        db.query(UserRecipeProgress)
+        .filter(
+            UserRecipeProgress.user_id == test_user.id,
+            UserRecipeProgress.week_number == 1,
+        )
+        .all()
+    )
+
+    assert len(progress) == 1
+    assert progress[0].recipe_id == new_recipe_id
+    assert progress[0].status == "not_started"
+    assert progress[0].completed_at is None

@@ -286,6 +286,10 @@ class PlanGenerationInput(BaseModel):
         max_length=1000,
         description="User intent for weekly plan generation",
     )
+    confirm_regeneration: bool = Field(
+        False,
+        description="Explicit acknowledgement that an existing week 1 plan will be reset",
+    )
 
 
 class GeneralChatInput(BaseModel):

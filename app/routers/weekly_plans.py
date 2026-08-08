@@ -54,15 +54,12 @@ async def get_weekly_plan(
             detail="This week is not yet unlocked. Complete current week first.",
         )
 
-    # Get recipe details
-    recipe_ids = parse_recipe_schedule(getattr(plan, "recipe_schedule"))
-    recipe_uuids = [uuid.UUID(rid) for rid in recipe_ids]
-    recipes = db.query(Recipe).filter(Recipe.id.in_(recipe_uuids)).all()
+    plan = plan_service.load_recipes_for_plan(plan, db)
 
     # Create response with recipes
     plan_response = WeeklyPlanResponse.model_validate(plan)
     plan_response.recipes = [
-        RecipeResponse.model_validate(recipe) for recipe in recipes
+        RecipeResponse.model_validate(recipe) for recipe in plan.recipes
     ]
 
     return plan_response
@@ -85,13 +82,11 @@ async def get_all_weekly_plans(
     # Add recipe details to each plan
     response_plans = []
     for plan in plans:
-        recipe_ids = parse_recipe_schedule(getattr(plan, "recipe_schedule"))
-        recipe_uuids = [uuid.UUID(rid) for rid in recipe_ids]
-        recipes = db.query(Recipe).filter(Recipe.id.in_(recipe_uuids)).all()
+        plan = plan_service.load_recipes_for_plan(plan, db)
 
         plan_response = WeeklyPlanResponse.model_validate(plan)
         plan_response.recipes = [
-            RecipeResponse.model_validate(recipe) for recipe in recipes
+            RecipeResponse.model_validate(recipe) for recipe in plan.recipes
         ]
         response_plans.append(plan_response)
 

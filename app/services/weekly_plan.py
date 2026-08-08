@@ -511,19 +511,21 @@ def validate_recipe_can_be_swapped(
         )
 
 
-def cleanup_swapped_recipe_progress(
+def replace_swapped_recipe_progress(
     user_id: uuid.UUID,
     old_recipe_id: uuid.UUID,
+    new_recipe_id: uuid.UUID,
     week_number: int,
     db: Session,
 ) -> None:
     """
-    Deletes progress for a swapped-out recipe.
-    Prevents orphaned progress entries.
+    Replace progress for a swapped-out recipe with a not-started entry for its
+    replacement. This keeps progress entries aligned with the plan schedule.
 
     Args:
         user_id: The user's UUID
         old_recipe_id: The recipe UUID that was removed
+        new_recipe_id: The recipe UUID that replaced it
         week_number: The week number
         db: Database session
     """
@@ -539,6 +541,23 @@ def cleanup_swapped_recipe_progress(
 
     if progress:
         db.delete(progress)
-        print(
-            f"[SwapCleanup] Deleted progress for swapped recipe {old_recipe_id} in week {week_number}"
+
+    replacement_progress = (
+        db.query(UserRecipeProgress)
+        .filter(
+            UserRecipeProgress.user_id == user_id,
+            UserRecipeProgress.recipe_id == new_recipe_id,
+            UserRecipeProgress.week_number == week_number,
+        )
+        .first()
+    )
+    if not replacement_progress:
+        db.add(
+            UserRecipeProgress(
+                user_id=user_id,
+                recipe_id=new_recipe_id,
+                week_number=week_number,
+                status="not_started",
+                completed_at=None,
+            )
         )
