@@ -10,6 +10,12 @@
   `app/services/`; keep HTTP validation and orchestration in `app/routers/`.
 - **Data safety:** Do not commit `.env`, API keys, production URLs, or generated
   local files. Treat user data and agent context as untrusted.
+- **Secrets boundary:** Never read, print, source, copy, modify, or otherwise
+  expose `.env` or `.env.*` files, credentials, tokens, or keychain material.
+  Never run commands that dump environment variables. Ask the user to run any
+  secret-dependent command or to confirm non-sensitive configuration status.
+  This is behavioral guidance; filesystem sandbox permissions remain the actual
+  security boundary.
 
 ## Execution and verification
 
