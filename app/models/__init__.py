@@ -82,6 +82,12 @@ class User(Base):
     recipe_repeat_preference = Column(
         String(20), nullable=False, default="standard"
     )  # standard (14d cooldown) or sooner (7d)
+    city = Column(String(100), nullable=True)
+    preferred_retailer = Column(String(100), nullable=True)
+    sodie_memory_enabled = Column(Boolean, nullable=False, default=False)
+    chat_retention_policy = Column(
+        String(20), nullable=False, default="18_months"
+    )
     hashed_password = Column(
         String, nullable=False
     )  # Store hashed password for authentication
@@ -91,6 +97,21 @@ class User(Base):
     weekly_plans = relationship("WeeklyPlan", back_populates="user")
     recipe_progress = relationship("UserRecipeProgress", back_populates="user")
     recipe_suggestions = relationship("RecipeSuggestion", back_populates="user")
+    pantry_items = relationship(
+        "UserPantryItem", back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class UserPantryItem(Base):
+    __tablename__ = "user_pantry_items"
+
+    id = Column(GUID, primary_key=True, default=uuid.uuid4, index=True)
+    user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    is_baseline = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User", back_populates="pantry_items")
 
 
 class Recipe(Base):

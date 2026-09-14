@@ -69,6 +69,10 @@ class UserCreate(BaseModel):
     max_cook_time_minutes: Optional[int] = Field(
         None, ge=0, description="Maximum acceptable cook time in minutes"
     )
+    city: Optional[str] = Field(None, max_length=100)
+    preferred_retailer: Optional[str] = Field(None, max_length=100)
+    sodie_memory_enabled: Optional[bool] = None
+    chat_retention_policy: Optional[Literal["3_months", "18_months", "36_months", "manual"]] = None
 
 
 class UserUpdate(BaseModel):
@@ -100,6 +104,33 @@ class UserUpdate(BaseModel):
         pattern="^(standard|sooner)$",
         description="How long before a cooked recipe can reappear in plans",
     )
+    city: Optional[str] = Field(None, max_length=100)
+    preferred_retailer: Optional[str] = Field(None, max_length=100)
+    sodie_memory_enabled: Optional[bool] = None
+    chat_retention_policy: Optional[Literal["3_months", "18_months", "36_months", "manual"]] = None
+
+
+class PantryItemInput(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    is_baseline: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def _trim_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Pantry item cannot be empty")
+        return value
+
+
+class PantryItemResponse(PantryItemInput):
+    id: UUID
+
+    model_config = {"from_attributes": True}
+
+
+class PantryReplaceRequest(BaseModel):
+    items: List[PantryItemInput] = Field(default_factory=list, max_length=100)
 
 
 class UpdateAccountDetails(BaseModel):
@@ -148,6 +179,10 @@ class UserResponse(BaseModel):
     max_prep_time_minutes: Optional[int] = None
     max_cook_time_minutes: Optional[int] = None
     recipe_repeat_preference: str = "standard"
+    city: Optional[str] = None
+    preferred_retailer: Optional[str] = None
+    sodie_memory_enabled: bool = False
+    chat_retention_policy: str = "18_months"
     created_at: datetime
 
     model_config = {"from_attributes": True}
