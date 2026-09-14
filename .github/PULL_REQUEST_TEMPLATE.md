@@ -1,30 +1,49 @@
 ## Summary
 
-<!-- What changed and why? Link the issue when one exists. -->
+<!-- What changed and why? Link the issue or planning artifact when one exists. -->
 
-## Reasoning
+## Why
 
-<!-- Explain the failure mode and why this implementation fixes it. -->
+<!-- Explain the user need, failure mode, and why this implementation fixes it. -->
 
-## Verification
+## Review level
 
-<!-- List commands run and their results. Include focused regression coverage. -->
+<!-- Select exactly one. A recommendation never authorizes merging. -->
+
+- [ ] Auto-approve — formatting or standard documentation only
+- [ ] Spot-check — isolated low-risk UI or mechanical changes
+- [ ] Full review — architecture, business logic, auth, data, APIs, AI,
+      dependencies, or migrations
+
+**Recommendation and reason:**
+
+**Human review focus:**
+
+## Changes
+
+<!-- Concise, user-meaningful change list. -->
+
+## Validation
+
+<!-- List exact commands and outcomes, including focused regression coverage. -->
 
 - [ ] Focused regression test added or updated
-- [ ] Full backend suite passes
-- [ ] Manual verification completed, or not applicable (explain below)
+- [ ] Full relevant suite passes
+- [ ] `git diff --check` passes
 
 ```text
 Command:
 Result:
 ```
 
-## Risk and rollback
+## UI evidence
 
-<!-- Note user-visible risk, migrations/config changes, and how to revert. -->
+<!-- Screenshots/walkthrough links, or why reliable local capture was unavailable. -->
 
-## Review checklist
+## Risks / rollout notes
 
-- [ ] This PR is on a dedicated working branch
-- [ ] No secrets, `.env` files, or generated local files are included
-- [ ] The PR remains a draft until it is ready for review
+<!-- Include migrations, configuration, backward compatibility, and rollback. -->
+
+## Reviewer notes
+
+<!-- Important tradeoffs, follow-ups, or deployment ordering. -->

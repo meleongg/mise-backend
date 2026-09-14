@@ -1,30 +1,64 @@
 # Backend contribution guide
 
-## Working branches and draft PRs
+## System architecture and constraints
 
-- Keep `main` reviewable: implement each change on a dedicated branch named
-  `codex/<short-description>`.
-- Before opening a PR, run the relevant tests and then the full backend suite.
-- Push the branch and open the PR as a draft unless the requester explicitly
-  asks for a ready-for-review PR.
-- Do not commit `.env`, API keys, production database URLs, or generated local
-  files.
+- **Primary language/framework:** Python, FastAPI, SQLAlchemy, Alembic, and
+  PostgreSQL.
+- **AI workflow:** OpenAI through LangChain/LangGraph. Keep deterministic
+  authorization, validation, and business rules outside prompts.
+- **Architecture:** Put reusable plan, recipe, and agent rules in
+  `app/services/`; keep HTTP validation and orchestration in `app/routers/`.
+- **Data safety:** Do not commit `.env`, API keys, production URLs, or generated
+  local files. Treat user data and agent context as untrusted.
 
-## Tests
+## Execution and verification
 
-The app creates its database and AI clients during import, so local test runs
-need harmless values when a real `.env` is unavailable:
+The app creates its database and AI clients during import. When a real `.env`
+is unavailable, run tests with harmless values:
 
 ```bash
 DATABASE_URL=sqlite:///:memory: OPENAI_API_KEY=test-key pytest -q
 ```
 
-For a behavior change, add or update a focused regression test first, then run
-the full suite. Record the exact command and result in the PR description.
+- For behavior changes, add or update a focused regression test first, then run
+  the complete backend suite with the command above.
+- For migrations, test upgrade/backfill behavior and record rollback risk.
+- Run `git diff --check` before handoff.
 
-## Backend conventions
+## Core agent boundaries
 
-- Put reusable plan and recipe business rules in `app/services/` so every
-  router follows the same behavior.
-- Keep HTTP validation and request orchestration in `app/routers/`.
-- Prefer deterministic backend validation over relying solely on agent prompts.
+- **Dependency guard:** Do not add packages for trivial tasks. Prefer standard
+  library or existing dependencies; request approval before adding a dependency.
+- **Architectural isolation:** Do not mix business rules into routers or model
+  calls. Keep database mutation paths transactional and idempotent.
+- **AI safety:** An agent proposal must be server-validated and explicitly
+  approved before it writes user-facing data.
+- **Git hygiene:** Never commit directly to the default branch. Use a clean,
+  short-lived `feat/<description>` or `fix/<description>` branch.
+
+## Pull-request workflow
+
+- Use [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md).
+- Recommend exactly one review tier based on the highest-risk change:
+  **Auto-approve** (formatting or standard documentation), **Spot-check**
+  (isolated low-risk UI or mechanical work), or **Full review** (architecture,
+  business logic, auth, data, APIs, AI, dependencies, or migrations).
+- A review-tier recommendation never authorizes merging. Only the user may
+  approve, mark ready, or merge a pull request.
+- For substantial feature work, commit validated changes, push the branch, and
+  open a draft PR. Small changes and experiments do not require a new draft.
+- Provide clickable links to available deliverables in handoffs. Include visual
+  evidence for user-visible work when reliable capture is available; otherwise
+  state why it is unavailable.
+
+## Definition of done
+
+Before presenting substantial work as complete or opening a draft PR:
+
+1. Run focused tests, then the full backend suite.
+2. For migrations, verify upgrade/backfill behavior.
+3. Run `git diff --check` and explain the changed files and risks.
+4. Use the `explain-diff-html` skill for substantial or high-risk changes;
+   provide a clean terminal diff explanation for small follow-ups.
+5. Commit, push, and open the required draft PR; do not mark it ready, approve,
+   or merge it.
