@@ -100,6 +100,7 @@ class User(Base):
     pantry_items = relationship(
         "UserPantryItem", back_populates="user", cascade="all, delete-orphan"
     )
+    sodie_threads = relationship("SodieThread", back_populates="user", cascade="all, delete-orphan")
 
 
 class UserPantryItem(Base):
@@ -112,6 +113,29 @@ class UserPantryItem(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="pantry_items")
+
+
+class SodieThread(Base):
+    __tablename__ = "sodie_threads"
+    id = Column(GUID, primary_key=True, default=uuid.uuid4, index=True)
+    user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
+    scope = Column(String(20), nullable=False, default="global")
+    context_id = Column(String(36), nullable=True)
+    is_temporary = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    user = relationship("User", back_populates="sodie_threads")
+    messages = relationship("SodieMessage", back_populates="thread", cascade="all, delete-orphan")
+
+
+class SodieMessage(Base):
+    __tablename__ = "sodie_messages"
+    id = Column(GUID, primary_key=True, default=uuid.uuid4, index=True)
+    thread_id = Column(GUID, ForeignKey("sodie_threads.id"), nullable=False, index=True)
+    sender = Column(String(10), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    thread = relationship("SodieThread", back_populates="messages")
 
 
 class Recipe(Base):
