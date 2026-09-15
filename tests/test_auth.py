@@ -90,3 +90,23 @@ def test_login_invalid_password(client, test_user):
         json={"email": "testuser@example.com", "password": "wrongpassword"},
     )
     assert response.status_code == 401
+
+
+def test_profile_preferences_and_pantry_are_user_scoped(client, test_user):
+    profile = client.put(
+        "/api/user/profile",
+        json={
+            "cuisine": "Italian", "frequency": 3, "skill_level": "intermediate",
+            "user_goal": "Learn New Techniques", "city": "Vancouver",
+            "preferred_retailer": "No Frills", "sodie_memory_enabled": True,
+            "chat_retention_policy": "18_months",
+        },
+    )
+    assert profile.status_code == 200
+    assert profile.json()["city"] == "Vancouver"
+    pantry = client.put("/api/users/pantry", json={"items": [
+        {"name": "Garlic", "is_baseline": True}, {"name": "Miso", "is_baseline": False}
+    ]})
+    assert pantry.status_code == 200
+    assert [item["name"] for item in pantry.json()] == ["Garlic", "Miso"]
+    assert client.put("/api/users/pantry", json={"items": [{"name": "garlic"}, {"name": "Garlic"}]}).status_code == 422

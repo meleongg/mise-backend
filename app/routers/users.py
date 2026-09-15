@@ -5,7 +5,7 @@ from uuid import UUID
 from app.database import get_db
 from app.utils.auth import get_current_user, require_same_user
 from app.utils.password import hash_password, verify_password
-from app.models import User
+from app.models import User, UserPantryItem
 from app.schemas import (
     UserCreate,
     UserUpdate,
@@ -13,6 +13,8 @@ from app.schemas import (
     UpdateAccountDetails,
     ChangePasswordRequest,
     MessageResponse,
+    PantryItemResponse,
+    PantryReplaceRequest,
 )
 
 router = APIRouter()
@@ -75,6 +77,40 @@ async def update_user(
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.get("/users/pantry", response_model=List[PantryItemResponse])
+async def get_pantry_items(
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+):
+    return (
+        db.query(UserPantryItem)
+        .filter(UserPantryItem.user_id == current_user.id)
+        .order_by(UserPantryItem.created_at, UserPantryItem.name)
+        .all()
+    )
+
+
+@router.put("/users/pantry", response_model=List[PantryItemResponse])
+async def replace_pantry_items(
+    payload: PantryReplaceRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    seen = set()
+    items = []
+    for item in payload.items:
+        key = item.name.casefold()
+        if key in seen:
+            raise HTTPException(status_code=422, detail="Pantry items must be unique")
+        seen.add(key)
+        items.append(UserPantryItem(user_id=current_user.id, **item.model_dump()))
+    db.query(UserPantryItem).filter(UserPantryItem.user_id == current_user.id).delete()
+    db.add_all(items)
+    db.commit()
+    for item in items:
+        db.refresh(item)
+    return items
 
 
 @router.get("/users", response_model=List[UserResponse])
