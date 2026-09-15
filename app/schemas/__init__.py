@@ -162,6 +162,11 @@ class SodieThreadResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SodieChatResponse(BaseModel):
+    user_message: SodieMessageResponse
+    ai_message: SodieMessageResponse
+
+
 class UpdateAccountDetails(BaseModel):
     """Schema for updating account details (email, name)"""
 
