@@ -3,7 +3,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from app.database import create_tables
 from app.routers import users, recipes, weekly_plans, feedback, auth, plan_agent
 from app.agents.checkpoint_setup import initialize_postgres_saver
 from app.core.rate_limit import limiter
@@ -14,8 +13,6 @@ import os
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    create_tables()
-
     app.state.checkpoint_saver = initialize_postgres_saver()
     print("✅ Checkpoint saver (in-memory) is active and ready.")
 
