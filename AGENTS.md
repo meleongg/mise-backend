@@ -42,6 +42,21 @@ DATABASE_URL=sqlite:///:memory: OPENAI_API_KEY=test-key pytest -q
 - **Git hygiene:** Never commit directly to the default branch. Use a clean,
   short-lived `feat/<description>` or `fix/<description>` branch.
 
+## Continuity and roadmap
+
+- At the beginning of product work, read the local workspace roadmap at
+  `../PLAN.md` when it is present, as well as this guide and the frontend
+  guide. It records accepted product decisions, migration state, known gaps,
+  and the next intended vertical slice.
+- `PLAN.md` is intentionally local-only, outside this repository. Never add it
+  to a commit or change this repository's ignore rules merely to track it.
+- Treat the plan as a handoff record, not proof of live deployment state:
+  reconcile Git and inspect tracked migrations/tests before acting. Never read
+  `.env` files to verify a deployment.
+- After a merged feature or a user-confirmed migration, update the local plan's
+  status and successor handoff so another agent can resume without rediscovering
+  decisions.
+
 ## Pull-request workflow
 
 - Use [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md).
