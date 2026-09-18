@@ -133,6 +133,40 @@ class PantryReplaceRequest(BaseModel):
     items: List[PantryItemInput] = Field(default_factory=list, max_length=100)
 
 
+class SodieThreadCreate(BaseModel):
+    scope: Literal["global", "plan", "recipe", "kitchen", "shopping"] = "global"
+    context_id: Optional[UUID] = None
+    is_temporary: bool = False
+
+
+class SodieMessageCreate(BaseModel):
+    content: str = Field(..., min_length=1, max_length=2000)
+
+
+class SodieMessageResponse(BaseModel):
+    id: UUID
+    sender: Literal["user", "ai"]
+    content: str
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class SodieThreadResponse(BaseModel):
+    id: UUID
+    scope: str
+    context_id: Optional[str]
+    is_temporary: bool
+    created_at: datetime
+    updated_at: datetime
+    messages: List[SodieMessageResponse] = []
+    model_config = {"from_attributes": True}
+
+
+class SodieChatResponse(BaseModel):
+    user_message: SodieMessageResponse
+    ai_message: SodieMessageResponse
+
+
 class UpdateAccountDetails(BaseModel):
     """Schema for updating account details (email, name)"""
 
