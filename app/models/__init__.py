@@ -101,6 +101,12 @@ class User(Base):
         "UserPantryItem", back_populates="user", cascade="all, delete-orphan"
     )
     sodie_threads = relationship("SodieThread", back_populates="user", cascade="all, delete-orphan")
+    personal_recipes = relationship(
+        "PersonalRecipe", back_populates="user", cascade="all, delete-orphan"
+    )
+    sodie_action_proposals = relationship(
+        "SodieActionProposal", back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class UserPantryItem(Base):
@@ -231,3 +237,74 @@ class RecipeSuggestion(Base):
     # Relationships
     user = relationship("User", back_populates="recipe_suggestions")
     recipe = relationship("Recipe", back_populates="recipe_suggestions")
+
+
+class PersonalRecipe(Base):
+    __tablename__ = "personal_recipes"
+
+    id = Column(GUID, primary_key=True, default=uuid.uuid4, index=True)
+    user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
+    source_recipe_id = Column(GUID, ForeignKey("recipes.id"), nullable=True, index=True)
+    name = Column(String(200), nullable=False)
+    ingredients = Column(Text, nullable=False)
+    instructions = Column(Text, nullable=False)
+    portion_size = Column(String(50), nullable=True)
+    notes = Column(Text, nullable=True)
+    metadata_json = Column(Text, nullable=True)
+    current_revision = Column(Integer, nullable=False, default=1)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User", back_populates="personal_recipes")
+    source_recipe = relationship("Recipe")
+    revisions = relationship(
+        "PersonalRecipeRevision",
+        back_populates="personal_recipe",
+        cascade="all, delete-orphan",
+    )
+
+
+class PersonalRecipeRevision(Base):
+    __tablename__ = "personal_recipe_revisions"
+
+    id = Column(GUID, primary_key=True, default=uuid.uuid4, index=True)
+    personal_recipe_id = Column(
+        GUID, ForeignKey("personal_recipes.id"), nullable=False, index=True
+    )
+    revision_number = Column(Integer, nullable=False)
+    content_snapshot = Column(Text, nullable=False)
+    structured_diff = Column(Text, nullable=True)
+    rationale = Column(Text, nullable=True)
+    actor_user_id = Column(GUID, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    personal_recipe = relationship("PersonalRecipe", back_populates="revisions")
+
+
+class SodieActionProposal(Base):
+    __tablename__ = "sodie_action_proposals"
+
+    id = Column(GUID, primary_key=True, default=uuid.uuid4, index=True)
+    user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
+    thread_id = Column(GUID, ForeignKey("sodie_threads.id"), nullable=True, index=True)
+    action_type = Column(String(50), nullable=False, default="propose_recipe_edit")
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    source_recipe_id = Column(GUID, ForeignKey("recipes.id"), nullable=True)
+    personal_recipe_id = Column(
+        GUID, ForeignKey("personal_recipes.id"), nullable=True
+    )
+    payload_json = Column(Text, nullable=False)
+    diff_json = Column(Text, nullable=False)
+    impact_json = Column(Text, nullable=True)
+    rationale = Column(Text, nullable=True)
+    idempotency_key = Column(String(100), nullable=False)
+    source_content_hash = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    applied_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", back_populates="sodie_action_proposals")
+    thread = relationship("SodieThread")
+    source_recipe = relationship("Recipe")
+    personal_recipe = relationship("PersonalRecipe")

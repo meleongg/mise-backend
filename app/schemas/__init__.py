@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Any
 from datetime import datetime
 from uuid import UUID
 
@@ -165,6 +165,7 @@ class SodieThreadResponse(BaseModel):
 class SodieChatResponse(BaseModel):
     user_message: SodieMessageResponse
     ai_message: SodieMessageResponse
+    proposal: Optional[Any] = None
 
 
 class UpdateAccountDetails(BaseModel):
