@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
-from app.models import SodieMessage, SodieThread, User
+from app.models import Recipe, SodieMessage, SodieThread, User
 from app.schemas import (
     SodieChatResponse,
     SodieMessageCreate,
@@ -16,6 +16,7 @@ from app.schemas import (
 )
 from app.schemas.sodie_proposals import (
     ClarifyProposalRequest,
+    ProposeRecipeEditFromRequest,
     ProposeRecipeEditRequest,
     ProposeRecipeEditResponse,
     SodieActionProposalResponse,
@@ -23,7 +24,12 @@ from app.schemas.sodie_proposals import (
 from app.utils.auth import get_current_user
 from app.constants import GENERATIVE_MODEL
 from app.services.sodie_chat_context import build_sodie_chat_context
-from app.services.sodie_llm import build_coach_prompt, invoke_chat_model
+from app.services.sodie_llm import (
+    build_coach_prompt,
+    draft_to_recipe_edit_patch,
+    generate_recipe_edit_patch,
+    invoke_chat_model,
+)
 from app.services import sodie_proposals as proposals
 from langchain_openai import ChatOpenAI
 
@@ -166,6 +172,57 @@ def create_proposal(
         "I prepared a personal recipe edit for your review. "
         "Approve to save a personal copy — the shared catalog recipe stays unchanged."
     )
+    if payload.thread_id:
+        thread = _thread(db, payload.thread_id, current_user.id)
+        message = SodieMessage(thread_id=thread.id, sender="ai", content=assistant)
+        thread.updated_at = datetime.now(timezone.utc)
+        db.add(message)
+        db.commit()
+    return ProposeRecipeEditResponse(
+        proposal=_proposal_response(proposal), assistant_message=assistant
+    )
+
+
+@router.post("/proposals/from-request", response_model=ProposeRecipeEditResponse)
+def create_proposal_from_request(
+    payload: ProposeRecipeEditFromRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Draft an allowlisted patch from natural language via structured LLM, then propose."""
+    if payload.thread_id:
+        _thread(db, payload.thread_id, current_user.id)
+
+    recipe = db.query(Recipe).filter(Recipe.id == payload.source_recipe_id).first()
+    if not recipe:
+        raise HTTPException(status_code=404, detail="Source recipe not found")
+
+    snapshot = proposals.recipe_content_snapshot(recipe)
+    draft = generate_recipe_edit_patch(snapshot, payload.request)
+    if draft.ambiguous:
+        raise HTTPException(
+            status_code=422,
+            detail=draft.change_summary
+            or "Could not map that request to a concrete recipe change.",
+        )
+
+    patch = draft_to_recipe_edit_patch(draft)
+    if not patch.model_dump(exclude_none=True):
+        raise HTTPException(
+            status_code=422,
+            detail="Could not map that request to a concrete recipe change.",
+        )
+
+    proposal = proposals.propose_recipe_edit(
+        db,
+        current_user,
+        source_recipe_id=payload.source_recipe_id,
+        patch=patch,
+        idempotency_key=payload.idempotency_key,
+        rationale=draft.change_summary or payload.request,
+        thread_id=payload.thread_id,
+    )
+    assistant = "Here’s a proposal from what you asked for."
     if payload.thread_id:
         thread = _thread(db, payload.thread_id, current_user.id)
         message = SodieMessage(thread_id=thread.id, sender="ai", content=assistant)

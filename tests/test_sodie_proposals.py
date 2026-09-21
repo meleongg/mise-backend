@@ -2,6 +2,7 @@
 
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+import json
 import uuid
 
 from fastapi import Depends
@@ -212,3 +213,81 @@ def test_plan_schedule_unchanged_on_approve(
     assert client.post(f"/api/sodie/proposals/{proposal_id}/approve").status_code == 200
     db.refresh(test_plan)
     assert test_plan.recipe_schedule == before
+
+
+def test_recipe_edit_patch_prompt_routes_taste_to_ingredients():
+    from app.services.sodie_llm import RECIPE_EDIT_PATCH_SYSTEM, build_recipe_edit_patch_prompt
+
+    assert "NEVER copy the user request into notes" in RECIPE_EDIT_PATCH_SYSTEM
+    assert "Saltier" in RECIPE_EDIT_PATCH_SYSTEM
+    messages = build_recipe_edit_patch_prompt(
+        {
+            "title": "Cookies",
+            "ingredients": [{"name": "salt", "measure": "1/4 tsp"}],
+            "notes": None,
+        },
+        "can we make the cookies saltier",
+    )
+    assert "CURRENT RECIPE" in messages[1].content
+    assert "can we make the cookies saltier" in messages[1].content
+
+
+def test_create_proposal_from_request_uses_structured_patch(
+    client, db: Session, test_user: User, test_recipes: list, monkeypatch
+):
+    from app.schemas.sodie_proposals import IngredientLine, RecipeEditPatchDraft
+
+    recipe = test_recipes[0]
+
+    def fake_generate(snapshot, request):
+        assert "saltier" in request.lower()
+        return RecipeEditPatchDraft(
+            ingredients=[
+                IngredientLine(name="flour", measure="2 cups"),
+                IngredientLine(name="salt", measure="1 tsp"),
+            ],
+            ambiguous=False,
+            change_summary="Increased salt for a saltier cookie.",
+        )
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_edit_patch", fake_generate
+    )
+
+    created = client.post(
+        "/api/sodie/proposals/from-request",
+        json={
+            "source_recipe_id": str(recipe.id),
+            "request": "can we make the cookies saltier",
+            "idempotency_key": "from-request-saltier-1",
+        },
+    )
+    assert created.status_code == 200
+    proposal = created.json()["proposal"]
+    fields = proposal["diff"]["fields"]
+    assert "ingredients" in fields
+    assert "notes" not in fields
+    assert "salt" in json.dumps(fields["ingredients"]["after"]).lower()
+
+
+def test_create_proposal_from_request_ambiguous(
+    client, db: Session, test_recipes: list, monkeypatch
+):
+    from app.schemas.sodie_proposals import RecipeEditPatchDraft
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_edit_patch",
+        lambda *_a, **_k: RecipeEditPatchDraft(
+            ambiguous=True,
+            change_summary="Not sure what to change — try naming an ingredient.",
+        ),
+    )
+    res = client.post(
+        "/api/sodie/proposals/from-request",
+        json={
+            "source_recipe_id": str(test_recipes[0].id),
+            "request": "make it better somehow",
+            "idempotency_key": "from-request-ambiguous-1",
+        },
+    )
+    assert res.status_code == 422
