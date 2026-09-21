@@ -149,11 +149,20 @@ def draft_to_recipe_edit_patch(draft: RecipeEditPatchDraft) -> RecipeEditPatch:
         ingredients = [
             {"name": row.name, "measure": row.measure} for row in draft.ingredients
         ]
+    instructions = None
+    if draft.instructions is not None:
+        instructions = [
+            {
+                **({"step": row.step} if row.step is not None else {}),
+                "text": row.text,
+            }
+            for row in draft.instructions
+        ]
     return RecipeEditPatch(
         title=draft.title,
         servings=draft.servings,
         ingredients=ingredients,
-        instructions=draft.instructions,
+        instructions=instructions,
         notes=draft.notes,
     )
 

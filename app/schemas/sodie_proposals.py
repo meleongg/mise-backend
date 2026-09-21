@@ -37,6 +37,13 @@ class IngredientLine(BaseModel):
     measure: str = Field("", max_length=100)
 
 
+class InstructionStep(BaseModel):
+    """Normalized instruction step for structured LLM output (OpenAI requires typed fields)."""
+
+    step: Optional[int] = Field(None, ge=1)
+    text: str = Field(..., min_length=1, max_length=2000)
+
+
 class RecipeEditPatchDraft(BaseModel):
     """
     Structured LLM classification + patch for a recipe-edit follow-up.
@@ -57,7 +64,10 @@ class RecipeEditPatchDraft(BaseModel):
     title: Optional[str] = Field(None, min_length=1, max_length=200)
     servings: Optional[str] = Field(None, max_length=50)
     ingredients: Optional[List[IngredientLine]] = None
-    instructions: Optional[Any] = None
+    instructions: Optional[List[InstructionStep]] = Field(
+        None,
+        description="Full updated instruction list when steps change; omit if unchanged.",
+    )
     notes: Optional[str] = Field(
         None,
         description="Cook tip that belongs on the recipe card — never the raw user request.",
