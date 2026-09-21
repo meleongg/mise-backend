@@ -42,9 +42,21 @@ SODIE_BASE_RULES = (
 )
 
 RECIPE_EDIT_PATCH_SYSTEM = (
-    "You convert a cook's natural-language recipe edit into a structured patch.\n"
+    "You classify a cook's natural-language follow-up and, when appropriate, "
+    "produce a structured recipe edit patch.\n"
     "Output must match the RecipeEditPatchDraft schema.\n\n"
-    "Field routing (critical):\n"
+    "Intent (pick exactly one):\n"
+    "- propose_edit — user wants the recipe content changed. Fill allowlisted "
+    "patch fields. Leave assistant_reply as a short confirmation intro.\n"
+    "- clarify — there is a PENDING PROPOSAL and the user is asking a question "
+    "about that pending diff (not requesting a new change). Do not fill patch "
+    "fields. Answer in assistant_reply; the pending diff stays unchanged.\n"
+    "- needs_more_info — the ask is too vague to map to a concrete field change, "
+    "or clarify was requested but there is no pending proposal. Do not fill patch "
+    "fields. Ask a brief clarifying question in assistant_reply.\n"
+    "If there is no pending proposal, never choose clarify — use propose_edit or "
+    "needs_more_info.\n\n"
+    "Field routing for propose_edit (critical):\n"
     "- Taste / seasoning / quantity asks → ingredients (adjust measures or add/remove rows).\n"
     "  Examples: saltier, less sugar, more garlic, add oatmeal, remove nuts, dairy-free butter swap.\n"
     "- Yield / how many people → servings.\n"
@@ -52,7 +64,7 @@ RECIPE_EDIT_PATCH_SYSTEM = (
     "- Reword or reorder steps → instructions (full updated steps).\n"
     "- notes is ONLY for a short cook tip that belongs on the recipe card "
     "(e.g. 'chill dough 30 min'). NEVER copy the user request into notes. "
-    "NEVER use notes as a dumping ground when you are unsure.\n\n"
+    "NEVER use notes as a dumping ground when you are unsure — use needs_more_info instead.\n\n"
     "Ingredient rules:\n"
     "- Prefer matching an existing ingredient name (salt, sugar, butter, etc.).\n"
     "- 'Saltier' / 'more salt' → increase the salt (or sea salt) measure; add a salt "
@@ -61,10 +73,7 @@ RECIPE_EDIT_PATCH_SYSTEM = (
     "- When ingredients change, return the COMPLETE updated ingredients list "
     "(every row with name + measure), not a partial delta.\n"
     "- Keep measures human-readable (e.g. '1 tsp', '1/2 cup').\n\n"
-    "Ambiguity:\n"
-    "- If you cannot map the request to a concrete allowlisted change, set "
-    "ambiguous=true and leave title/servings/ingredients/instructions/notes null.\n"
-    "- change_summary should briefly explain the edit (or why it is ambiguous).\n"
+    "change_summary briefly explains the edit or why clarify/needs_more_info.\n"
 )
 
 
@@ -108,14 +117,25 @@ def build_coach_prompt(
 
 
 def build_recipe_edit_patch_prompt(
-    recipe_snapshot: Dict[str, Any], user_request: str
+    recipe_snapshot: Dict[str, Any],
+    user_request: str,
+    *,
+    pending_diff: Dict[str, Any] | None = None,
 ) -> list[BaseMessage]:
-    """Messages for structured recipe-edit patch generation (shown for debugging/review)."""
+    """Messages for structured recipe-edit classification + patch generation."""
     recipe_json = json.dumps(recipe_snapshot, indent=2, default=str)
+    if pending_diff is None:
+        pending_block = "PENDING PROPOSAL: none\n"
+    else:
+        pending_block = (
+            "PENDING PROPOSAL: yes (user may clarify this diff or request a new edit)\n"
+            f"PENDING DIFF (JSON):\n{json.dumps(pending_diff, indent=2, default=str)}\n"
+        )
     user_block = (
         f"CURRENT RECIPE (JSON):\n{recipe_json}\n\n"
-        f"USER EDIT REQUEST:\n{user_request.strip()}\n\n"
-        "Produce the structured patch for this request."
+        f"{pending_block}\n"
+        f"USER MESSAGE:\n{user_request.strip()}\n\n"
+        "Classify intent and produce the structured output."
     )
     return [
         SystemMessage(content=RECIPE_EDIT_PATCH_SYSTEM),
@@ -139,12 +159,17 @@ def draft_to_recipe_edit_patch(draft: RecipeEditPatchDraft) -> RecipeEditPatch:
 
 
 def generate_recipe_edit_patch(
-    recipe_snapshot: Dict[str, Any], user_request: str
+    recipe_snapshot: Dict[str, Any],
+    user_request: str,
+    *,
+    pending_diff: Dict[str, Any] | None = None,
 ) -> RecipeEditPatchDraft:
-    """Use structured LLM output to map NL edit → allowlisted patch fields."""
+    """LLM classifies intent and maps NL → allowlisted patch fields when editing."""
     llm = ChatOpenAI(model=GENERATIVE_MODEL, temperature=0)
     structured = llm.with_structured_output(RecipeEditPatchDraft)
-    messages = build_recipe_edit_patch_prompt(recipe_snapshot, user_request)
+    messages = build_recipe_edit_patch_prompt(
+        recipe_snapshot, user_request, pending_diff=pending_diff
+    )
     try:
         draft = structured.invoke(messages)
     except HTTPException:

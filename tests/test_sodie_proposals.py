@@ -220,6 +220,7 @@ def test_recipe_edit_patch_prompt_routes_taste_to_ingredients():
 
     assert "NEVER copy the user request into notes" in RECIPE_EDIT_PATCH_SYSTEM
     assert "Saltier" in RECIPE_EDIT_PATCH_SYSTEM
+    assert "propose_edit" in RECIPE_EDIT_PATCH_SYSTEM
     messages = build_recipe_edit_patch_prompt(
         {
             "title": "Cookies",
@@ -230,6 +231,7 @@ def test_recipe_edit_patch_prompt_routes_taste_to_ingredients():
     )
     assert "CURRENT RECIPE" in messages[1].content
     assert "can we make the cookies saltier" in messages[1].content
+    assert "PENDING PROPOSAL: none" in messages[1].content
 
 
 def test_create_proposal_from_request_uses_structured_patch(
@@ -239,15 +241,16 @@ def test_create_proposal_from_request_uses_structured_patch(
 
     recipe = test_recipes[0]
 
-    def fake_generate(snapshot, request):
+    def fake_generate(snapshot, request, pending_diff=None):
         assert "saltier" in request.lower()
         return RecipeEditPatchDraft(
+            intent="propose_edit",
             ingredients=[
                 IngredientLine(name="flour", measure="2 cups"),
                 IngredientLine(name="salt", measure="1 tsp"),
             ],
-            ambiguous=False,
             change_summary="Increased salt for a saltier cookie.",
+            assistant_reply="Here’s a proposal from what you asked for.",
         )
 
     monkeypatch.setattr(
@@ -263,14 +266,16 @@ def test_create_proposal_from_request_uses_structured_patch(
         },
     )
     assert created.status_code == 200
-    proposal = created.json()["proposal"]
+    body = created.json()
+    assert body["kind"] == "proposal"
+    proposal = body["proposal"]
     fields = proposal["diff"]["fields"]
     assert "ingredients" in fields
     assert "notes" not in fields
     assert "salt" in json.dumps(fields["ingredients"]["after"]).lower()
 
 
-def test_create_proposal_from_request_ambiguous(
+def test_create_proposal_from_request_needs_more_info(
     client, db: Session, test_recipes: list, monkeypatch
 ):
     from app.schemas.sodie_proposals import RecipeEditPatchDraft
@@ -278,8 +283,9 @@ def test_create_proposal_from_request_ambiguous(
     monkeypatch.setattr(
         "app.routers.sodie.generate_recipe_edit_patch",
         lambda *_a, **_k: RecipeEditPatchDraft(
-            ambiguous=True,
-            change_summary="Not sure what to change — try naming an ingredient.",
+            intent="needs_more_info",
+            change_summary="Too vague.",
+            assistant_reply="What should I change — less sugar, more salt, or something else?",
         ),
     )
     res = client.post(
@@ -290,4 +296,45 @@ def test_create_proposal_from_request_ambiguous(
             "idempotency_key": "from-request-ambiguous-1",
         },
     )
-    assert res.status_code == 422
+    assert res.status_code == 200
+    body = res.json()
+    assert body["kind"] == "needs_more_info"
+    assert body["proposal"] is None
+    assert "sugar" in body["assistant_message"].lower() or "change" in body["assistant_message"].lower()
+
+
+def test_create_proposal_from_request_clarify_keeps_pending(
+    client, db: Session, test_user: User, test_recipes: list, monkeypatch
+):
+    from app.schemas.sodie_proposals import RecipeEditPatchDraft
+
+    recipe = test_recipes[0]
+    created = client.post(
+        "/api/sodie/proposals",
+        json=_propose_body(str(recipe.id), key="clarify-pending-1"),
+    )
+    proposal_id = created.json()["proposal"]["id"]
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_edit_patch",
+        lambda *_a, **_k: RecipeEditPatchDraft(
+            intent="clarify",
+            change_summary="User asked why salt increased.",
+            assistant_reply="The pending diff doubles the salt measure; approve to keep it.",
+        ),
+    )
+    res = client.post(
+        "/api/sodie/proposals/from-request",
+        json={
+            "source_recipe_id": str(recipe.id),
+            "request": "why did you change the salt?",
+            "idempotency_key": "from-request-clarify-1",
+            "pending_proposal_id": proposal_id,
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["kind"] == "clarify"
+    assert body["proposal"] is None
+    still = client.get(f"/api/sodie/proposals/{proposal_id}")
+    assert still.json()["status"] == "pending"

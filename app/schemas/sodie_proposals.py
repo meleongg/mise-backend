@@ -39,12 +39,21 @@ class IngredientLine(BaseModel):
 
 class RecipeEditPatchDraft(BaseModel):
     """
-    Structured LLM output for a recipe edit.
+    Structured LLM classification + patch for a recipe-edit follow-up.
 
-    Only include fields that must change. When changing ingredients, return the
-    full updated list (not a delta). Never dump the user request into notes.
+    The model owns intent routing (propose vs clarify vs ask for more info) and
+    field routing (ingredients vs servings vs notes, etc.). Never dump the raw
+    user request into notes.
     """
 
+    intent: Literal["propose_edit", "clarify", "needs_more_info"] = Field(
+        ...,
+        description=(
+            "propose_edit = build a new allowlisted patch; "
+            "clarify = answer a question about a pending diff without changing it; "
+            "needs_more_info = cannot map the ask to a concrete change yet."
+        ),
+    )
     title: Optional[str] = Field(None, min_length=1, max_length=200)
     servings: Optional[str] = Field(None, max_length=50)
     ingredients: Optional[List[IngredientLine]] = None
@@ -53,15 +62,17 @@ class RecipeEditPatchDraft(BaseModel):
         None,
         description="Cook tip that belongs on the recipe card — never the raw user request.",
     )
-    ambiguous: bool = Field(
-        False,
-        description="True when the request cannot be mapped to a concrete field change.",
-    )
     change_summary: str = Field(
         ...,
         min_length=1,
         max_length=300,
-        description="Short description of what changed for the proposal rationale.",
+        description="Short rationale for the proposal, or why clarify/needs_more_info.",
+    )
+    assistant_reply: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Short user-facing reply for clarify / needs_more_info (and optional intro for propose_edit).",
     )
 
 
@@ -74,12 +85,13 @@ class ProposeRecipeEditRequest(BaseModel):
 
 
 class ProposeRecipeEditFromRequest(BaseModel):
-    """Natural-language edit; server builds an allowlisted patch via structured LLM."""
+    """Natural-language edit; server classifies intent and builds an allowlisted patch."""
 
     source_recipe_id: UUID
     request: str = Field(..., min_length=1, max_length=2000)
     idempotency_key: str = Field(..., min_length=8, max_length=100)
     thread_id: Optional[UUID] = None
+    pending_proposal_id: Optional[UUID] = None
 
 
 class ClarifyProposalRequest(BaseModel):
@@ -121,5 +133,6 @@ class SodieActionProposalResponse(BaseModel):
 
 
 class ProposeRecipeEditResponse(BaseModel):
-    proposal: SodieActionProposalResponse
+    proposal: Optional[SodieActionProposalResponse] = None
+    kind: Literal["proposal", "clarify", "needs_more_info"] = "proposal"
     assistant_message: Optional[str] = None
