@@ -258,7 +258,7 @@ def create_proposal_from_request(
         )
 
     # propose_edit
-    patch = draft_to_recipe_edit_patch(draft)
+    patch = draft_to_recipe_edit_patch(draft, recipe_snapshot=snapshot)
     if not patch.model_dump(exclude_none=True):
         return ProposeRecipeEditResponse(
             kind="needs_more_info",

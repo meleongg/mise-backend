@@ -215,12 +215,29 @@ def test_plan_schedule_unchanged_on_approve(
     assert test_plan.recipe_schedule == before
 
 
+def test_merge_ingredient_updates_keeps_full_list():
+    from app.schemas.sodie_proposals import IngredientLine
+    from app.services.sodie_llm import merge_ingredient_updates
+
+    base = [
+        {"name": "all-purpose flour", "measure": "2 cups"},
+        {"name": "salt", "measure": "1/2 teaspoon"},
+        {"name": "chocolate chips", "measure": "2 cups"},
+    ]
+    merged = merge_ingredient_updates(
+        base, [IngredientLine(name="salt", measure="1 teaspoon")]
+    )
+    assert len(merged) == 3
+    assert merged[0]["name"] == "all-purpose flour"
+    assert merged[1] == {"name": "salt", "measure": "1 teaspoon"}
+    assert merged[2]["name"] == "chocolate chips"
+
+
 def test_recipe_edit_patch_prompt_routes_taste_to_ingredients():
     from app.services.sodie_llm import RECIPE_EDIT_PATCH_SYSTEM, build_recipe_edit_patch_prompt
 
-    assert "NEVER copy the user request into notes" in RECIPE_EDIT_PATCH_SYSTEM
-    assert "Saltier" in RECIPE_EDIT_PATCH_SYSTEM
-    assert "propose_edit" in RECIPE_EDIT_PATCH_SYSTEM
+    assert "NEVER return only the changed ingredient" in RECIPE_EDIT_PATCH_SYSTEM
+    assert "COMPLETE recipe list" in RECIPE_EDIT_PATCH_SYSTEM
     messages = build_recipe_edit_patch_prompt(
         {
             "title": "Cookies",

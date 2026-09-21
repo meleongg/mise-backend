@@ -63,7 +63,14 @@ class RecipeEditPatchDraft(BaseModel):
     )
     title: Optional[str] = Field(None, min_length=1, max_length=200)
     servings: Optional[str] = Field(None, max_length=50)
-    ingredients: Optional[List[IngredientLine]] = None
+    ingredients: Optional[List[IngredientLine]] = Field(
+        None,
+        description=(
+            "COMPLETE ingredient list for the recipe when any ingredient changes: "
+            "keep every existing row, update only requested measures, append new rows. "
+            "Never return only the changed ingredient."
+        ),
+    )
     instructions: Optional[List[InstructionStep]] = Field(
         None,
         description="Full updated instruction list when steps change; omit if unchanged.",
