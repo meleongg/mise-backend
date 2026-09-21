@@ -135,7 +135,8 @@ class PantryReplaceRequest(BaseModel):
 
 class SodieThreadCreate(BaseModel):
     scope: Literal["global", "plan", "recipe", "kitchen", "shopping"] = "global"
-    context_id: Optional[UUID] = None
+    # Entity id for the page: recipe UUID, weekly_plan UUID, or week number as digits.
+    context_id: Optional[str] = Field(None, max_length=36)
     is_temporary: bool = False
 
 

@@ -1,6 +1,15 @@
 from unittest.mock import MagicMock, patch
+import uuid
 
-from app.services.sodie_chat_context import build_sodie_chat_context
+from fastapi import HTTPException
+
+from app.models import User
+from app.services.sodie_chat_context import (
+    authorize_page_context,
+    build_sodie_chat_context,
+    build_sodie_prompt_context,
+)
+import app.utils.password as password_utils
 
 
 def test_build_sodie_chat_context_no_plan(db, test_user):
@@ -25,6 +34,48 @@ def test_build_sodie_chat_context_with_plan(
     assert "Swaps remaining" in context
     assert "vegetarian" in context
     assert "dairy" in context
+
+
+def test_recipe_page_snapshot_includes_ingredients(db, test_user, test_recipes):
+    recipe = test_recipes[0]
+    snapshot, week = authorize_page_context(db, test_user, "recipe", str(recipe.id))
+    assert week is None
+    assert "ACTIVE PAGE: recipe" in snapshot
+    assert recipe.name in snapshot
+    assert "Ingredients:" in snapshot
+    assert "Instructions:" in snapshot
+
+
+def test_plan_page_context_denied_for_other_user(db, test_user, test_plan):
+    other = User(
+        id=uuid.uuid4(),
+        email="other-page-context@example.com",
+        first_name="Other",
+        last_name="User",
+        cuisine="Italian",
+        frequency=3,
+        skill_level="intermediate",
+        user_goal="Learn New Techniques",
+        hashed_password=password_utils.hash_password("OtherUser123!"),
+    )
+    db.add(other)
+    db.flush()
+    try:
+        authorize_page_context(db, other, "plan", str(test_plan.id))
+        assert False, "expected 404"
+    except HTTPException as exc:
+        assert exc.status_code == 404
+
+
+def test_prompt_context_combines_profile_and_page(db, test_user, test_recipes):
+    recipe = test_recipes[0]
+    text = build_sodie_prompt_context(
+        db, test_user, scope="kitchen", context_id=str(recipe.id)
+    )
+    assert "USER PROFILE:" in text
+    assert "ACTIVE PAGE: kitchen" in text
+    assert recipe.name in text
+    assert "Kitchen Mode" in text
 
 
 @patch("app.routers.plan_agent.ensure_user_text_allowed")
