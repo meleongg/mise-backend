@@ -2,6 +2,7 @@
 
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+import json
 import uuid
 
 from fastapi import Depends
@@ -151,6 +152,47 @@ def test_duplicate_approve_is_idempotent(client, test_user: User, test_recipes: 
     assert len(client.get("/api/personal-recipes").json()) == 1
 
 
+def test_second_approve_same_source_bumps_revision_not_duplicate(
+    client, db: Session, test_user: User, test_recipes: list
+):
+    recipe_id = str(test_recipes[0].id)
+    first_id = client.post(
+        "/api/sodie/proposals",
+        json=_propose_body(recipe_id, key="upsert-rev-1", title="Cookies v1"),
+    ).json()["proposal"]["id"]
+    first = client.post(f"/api/sodie/proposals/{first_id}/approve")
+    assert first.status_code == 200
+    personal_id = first.json()["personal_recipe_id"]
+
+    second_id = client.post(
+        "/api/sodie/proposals",
+        json=_propose_body(recipe_id, key="upsert-rev-2", title="Cookies v2"),
+    ).json()["proposal"]["id"]
+    second = client.post(f"/api/sodie/proposals/{second_id}/approve")
+    assert second.status_code == 200
+    assert second.json()["personal_recipe_id"] == personal_id
+
+    listed = client.get("/api/personal-recipes").json()
+    assert len(listed) == 1
+    assert listed[0]["id"] == personal_id
+    assert listed[0]["current_revision"] == 2
+    assert listed[0]["name"] == "Cookies v2"
+
+
+def test_archive_personal_recipe(client, test_user: User, test_recipes: list):
+    proposal_id = client.post(
+        "/api/sodie/proposals",
+        json=_propose_body(str(test_recipes[0].id), key="archive-1"),
+    ).json()["proposal"]["id"]
+    personal_id = client.post(f"/api/sodie/proposals/{proposal_id}/approve").json()[
+        "personal_recipe_id"
+    ]
+    archived = client.delete(f"/api/personal-recipes/{personal_id}")
+    assert archived.status_code == 200
+    assert archived.json()["is_active"] is False
+    assert client.get("/api/personal-recipes").json() == []
+
+
 def test_propose_idempotency_key_returns_same_proposal(
     client, test_user: User, test_recipes: list
 ):
@@ -212,3 +254,145 @@ def test_plan_schedule_unchanged_on_approve(
     assert client.post(f"/api/sodie/proposals/{proposal_id}/approve").status_code == 200
     db.refresh(test_plan)
     assert test_plan.recipe_schedule == before
+
+
+def test_merge_ingredient_updates_keeps_full_list():
+    from app.schemas.sodie_proposals import IngredientLine
+    from app.services.sodie_llm import merge_ingredient_updates
+
+    base = [
+        {"name": "all-purpose flour", "measure": "2 cups"},
+        {"name": "salt", "measure": "1/2 teaspoon"},
+        {"name": "chocolate chips", "measure": "2 cups"},
+    ]
+    merged = merge_ingredient_updates(
+        base, [IngredientLine(name="salt", measure="1 teaspoon")]
+    )
+    assert len(merged) == 3
+    assert merged[0]["name"] == "all-purpose flour"
+    assert merged[1] == {"name": "salt", "measure": "1 teaspoon"}
+    assert merged[2]["name"] == "chocolate chips"
+
+
+def test_recipe_edit_patch_prompt_routes_taste_to_ingredients():
+    from app.services.sodie_llm import RECIPE_EDIT_PATCH_SYSTEM, build_recipe_edit_patch_prompt
+
+    assert "NEVER return only the changed ingredient" in RECIPE_EDIT_PATCH_SYSTEM
+    assert "COMPLETE recipe list" in RECIPE_EDIT_PATCH_SYSTEM
+    messages = build_recipe_edit_patch_prompt(
+        {
+            "title": "Cookies",
+            "ingredients": [{"name": "salt", "measure": "1/4 tsp"}],
+            "notes": None,
+        },
+        "can we make the cookies saltier",
+    )
+    assert "CURRENT RECIPE" in messages[1].content
+    assert "can we make the cookies saltier" in messages[1].content
+    assert "PENDING PROPOSAL: none" in messages[1].content
+
+
+def test_create_proposal_from_request_uses_structured_patch(
+    client, db: Session, test_user: User, test_recipes: list, monkeypatch
+):
+    from app.schemas.sodie_proposals import IngredientLine, RecipeEditPatchDraft
+
+    recipe = test_recipes[0]
+
+    def fake_generate(snapshot, request, pending_diff=None):
+        assert "saltier" in request.lower()
+        return RecipeEditPatchDraft(
+            intent="propose_edit",
+            ingredients=[
+                IngredientLine(name="flour", measure="2 cups"),
+                IngredientLine(name="salt", measure="1 tsp"),
+            ],
+            change_summary="Increased salt for a saltier cookie.",
+            assistant_reply="Here’s a proposal from what you asked for.",
+        )
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_edit_patch", fake_generate
+    )
+
+    created = client.post(
+        "/api/sodie/proposals/from-request",
+        json={
+            "source_recipe_id": str(recipe.id),
+            "request": "can we make the cookies saltier",
+            "idempotency_key": "from-request-saltier-1",
+        },
+    )
+    assert created.status_code == 200
+    body = created.json()
+    assert body["kind"] == "proposal"
+    proposal = body["proposal"]
+    fields = proposal["diff"]["fields"]
+    assert "ingredients" in fields
+    assert "notes" not in fields
+    assert "salt" in json.dumps(fields["ingredients"]["after"]).lower()
+
+
+def test_create_proposal_from_request_needs_more_info(
+    client, db: Session, test_recipes: list, monkeypatch
+):
+    from app.schemas.sodie_proposals import RecipeEditPatchDraft
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_edit_patch",
+        lambda *_a, **_k: RecipeEditPatchDraft(
+            intent="needs_more_info",
+            change_summary="Too vague.",
+            assistant_reply="What should I change — less sugar, more salt, or something else?",
+        ),
+    )
+    res = client.post(
+        "/api/sodie/proposals/from-request",
+        json={
+            "source_recipe_id": str(test_recipes[0].id),
+            "request": "make it better somehow",
+            "idempotency_key": "from-request-ambiguous-1",
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["kind"] == "needs_more_info"
+    assert body["proposal"] is None
+    assert "sugar" in body["assistant_message"].lower() or "change" in body["assistant_message"].lower()
+
+
+def test_create_proposal_from_request_clarify_keeps_pending(
+    client, db: Session, test_user: User, test_recipes: list, monkeypatch
+):
+    from app.schemas.sodie_proposals import RecipeEditPatchDraft
+
+    recipe = test_recipes[0]
+    created = client.post(
+        "/api/sodie/proposals",
+        json=_propose_body(str(recipe.id), key="clarify-pending-1"),
+    )
+    proposal_id = created.json()["proposal"]["id"]
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_edit_patch",
+        lambda *_a, **_k: RecipeEditPatchDraft(
+            intent="clarify",
+            change_summary="User asked why salt increased.",
+            assistant_reply="The pending diff doubles the salt measure; approve to keep it.",
+        ),
+    )
+    res = client.post(
+        "/api/sodie/proposals/from-request",
+        json={
+            "source_recipe_id": str(recipe.id),
+            "request": "why did you change the salt?",
+            "idempotency_key": "from-request-clarify-1",
+            "pending_proposal_id": proposal_id,
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["kind"] == "clarify"
+    assert body["proposal"] is None
+    still = client.get(f"/api/sodie/proposals/{proposal_id}")
+    assert still.json()["status"] == "pending"
