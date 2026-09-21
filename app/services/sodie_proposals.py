@@ -99,6 +99,8 @@ def build_impact_preview() -> Dict[str, Any]:
 
 
 def serialize_personal_recipe(personal: PersonalRecipe) -> Dict[str, Any]:
+    meta = _json_loads(personal.metadata_json, {}) or {}
+    source = personal.source_recipe
     return {
         "id": personal.id,
         "source_recipe_id": personal.source_recipe_id,
@@ -107,11 +109,18 @@ def serialize_personal_recipe(personal: PersonalRecipe) -> Dict[str, Any]:
         "instructions": _json_loads(personal.instructions, personal.instructions),
         "portion_size": personal.portion_size,
         "notes": personal.notes,
-        "metadata": _json_loads(personal.metadata_json, {}),
+        "metadata": meta,
         "current_revision": personal.current_revision,
         "is_active": personal.is_active,
         "created_at": personal.created_at,
         "updated_at": personal.updated_at,
+        # Catalog chrome for display until personal copies own their own media.
+        "image_url": getattr(source, "image_url", None) if source else None,
+        "cuisine": getattr(source, "cuisine", None) if source else meta.get("cuisine"),
+        "dietary_tags": meta.get("dietary_tags")
+        or (_json_loads(getattr(source, "dietary_tags", None), None) if source else None),
+        "allergens": meta.get("allergens")
+        or (_json_loads(getattr(source, "allergens", None), None) if source else None),
     }
 
 
@@ -235,30 +244,60 @@ def apply_recipe_edit(db: Session, user: User, proposal_id: UUID) -> SodieAction
         raise HTTPException(status_code=500, detail="Proposal payload is invalid")
 
     now = datetime.now(timezone.utc)
-    personal = PersonalRecipe(
-        user_id=user.id,
-        source_recipe_id=recipe.id,
-        name=after["title"],
-        ingredients=_json_dumps(after.get("ingredients", [])),
-        instructions=(
-            _json_dumps(after["instructions"])
-            if not isinstance(after.get("instructions"), str)
-            else after["instructions"]
-        ),
-        portion_size=after.get("servings"),
-        notes=after.get("notes"),
-        metadata_json=_json_dumps(after.get("metadata") or {}),
-        current_revision=1,
-        is_active=True,
-        created_at=now,
-        updated_at=now,
+    # One active personal recipe per user + catalog source; further Approves bump revision.
+    personal = (
+        db.query(PersonalRecipe)
+        .filter(
+            PersonalRecipe.user_id == user.id,
+            PersonalRecipe.source_recipe_id == recipe.id,
+            PersonalRecipe.is_active.is_(True),
+        )
+        .order_by(PersonalRecipe.updated_at.desc())
+        .first()
     )
-    db.add(personal)
-    db.flush()
+
+    instructions_value = (
+        _json_dumps(after["instructions"])
+        if not isinstance(after.get("instructions"), str)
+        else after["instructions"]
+    )
+    # Preserve catalog dietary/image lineage in metadata when the patch did not set it.
+    meta = after.get("metadata") if isinstance(after.get("metadata"), dict) else {}
+    if not meta:
+        meta = current.get("metadata") or {}
+
+    if personal:
+        personal.name = after["title"]
+        personal.ingredients = _json_dumps(after.get("ingredients", []))
+        personal.instructions = instructions_value
+        personal.portion_size = after.get("servings")
+        personal.notes = after.get("notes")
+        personal.metadata_json = _json_dumps(meta)
+        personal.current_revision = int(personal.current_revision or 0) + 1
+        personal.updated_at = now
+        revision_number = personal.current_revision
+    else:
+        personal = PersonalRecipe(
+            user_id=user.id,
+            source_recipe_id=recipe.id,
+            name=after["title"],
+            ingredients=_json_dumps(after.get("ingredients", [])),
+            instructions=instructions_value,
+            portion_size=after.get("servings"),
+            notes=after.get("notes"),
+            metadata_json=_json_dumps(meta),
+            current_revision=1,
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(personal)
+        db.flush()
+        revision_number = 1
 
     revision = PersonalRecipeRevision(
         personal_recipe_id=personal.id,
-        revision_number=1,
+        revision_number=revision_number,
         content_snapshot=_json_dumps(after),
         structured_diff=proposal.diff_json,
         rationale=proposal.rationale,
@@ -294,6 +333,65 @@ def get_personal_recipe(db: Session, user: User, personal_recipe_id: UUID) -> Pe
     )
     if not personal:
         raise HTTPException(status_code=404, detail="Personal recipe not found")
+    return personal
+
+
+def update_personal_recipe(
+    db: Session,
+    user: User,
+    personal_recipe_id: UUID,
+    *,
+    name: Optional[str] = None,
+    ingredients: Any = None,
+    instructions: Any = None,
+    portion_size: Optional[str] = None,
+    notes: Optional[str] = None,
+) -> PersonalRecipe:
+    personal = get_personal_recipe(db, user, personal_recipe_id)
+    if not personal.is_active:
+        raise HTTPException(status_code=409, detail="Personal recipe is archived")
+
+    now = datetime.now(timezone.utc)
+    if name is not None:
+        personal.name = name.strip()
+    if ingredients is not None:
+        personal.ingredients = _json_dumps(ingredients)
+    if instructions is not None:
+        personal.instructions = (
+            instructions if isinstance(instructions, str) else _json_dumps(instructions)
+        )
+    if portion_size is not None:
+        personal.portion_size = portion_size
+    if notes is not None:
+        personal.notes = notes
+
+    snapshot = personal_content_snapshot(personal)
+    personal.current_revision = int(personal.current_revision or 0) + 1
+    personal.updated_at = now
+    db.add(
+        PersonalRecipeRevision(
+            personal_recipe_id=personal.id,
+            revision_number=personal.current_revision,
+            content_snapshot=_json_dumps(snapshot),
+            structured_diff=None,
+            rationale="Manual edit",
+            actor_user_id=user.id,
+            created_at=now,
+        )
+    )
+    db.commit()
+    db.refresh(personal)
+    return personal
+
+
+def archive_personal_recipe(
+    db: Session, user: User, personal_recipe_id: UUID
+) -> PersonalRecipe:
+    personal = get_personal_recipe(db, user, personal_recipe_id)
+    personal.is_active = False
+    personal.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(personal)
     return personal
 
 

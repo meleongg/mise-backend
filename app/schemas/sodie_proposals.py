@@ -128,7 +128,19 @@ class PersonalRecipeResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    image_url: Optional[str] = None
+    cuisine: Optional[str] = None
+    dietary_tags: Optional[Any] = None
+    allergens: Optional[Any] = None
     model_config = {"from_attributes": True}
+
+
+class UpdatePersonalRecipeRequest(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    ingredients: Optional[Any] = None
+    instructions: Optional[Any] = None
+    portion_size: Optional[str] = Field(None, max_length=50)
+    notes: Optional[str] = None
 
 
 class SodieActionProposalResponse(BaseModel):

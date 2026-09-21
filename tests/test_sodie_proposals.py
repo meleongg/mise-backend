@@ -152,6 +152,47 @@ def test_duplicate_approve_is_idempotent(client, test_user: User, test_recipes: 
     assert len(client.get("/api/personal-recipes").json()) == 1
 
 
+def test_second_approve_same_source_bumps_revision_not_duplicate(
+    client, db: Session, test_user: User, test_recipes: list
+):
+    recipe_id = str(test_recipes[0].id)
+    first_id = client.post(
+        "/api/sodie/proposals",
+        json=_propose_body(recipe_id, key="upsert-rev-1", title="Cookies v1"),
+    ).json()["proposal"]["id"]
+    first = client.post(f"/api/sodie/proposals/{first_id}/approve")
+    assert first.status_code == 200
+    personal_id = first.json()["personal_recipe_id"]
+
+    second_id = client.post(
+        "/api/sodie/proposals",
+        json=_propose_body(recipe_id, key="upsert-rev-2", title="Cookies v2"),
+    ).json()["proposal"]["id"]
+    second = client.post(f"/api/sodie/proposals/{second_id}/approve")
+    assert second.status_code == 200
+    assert second.json()["personal_recipe_id"] == personal_id
+
+    listed = client.get("/api/personal-recipes").json()
+    assert len(listed) == 1
+    assert listed[0]["id"] == personal_id
+    assert listed[0]["current_revision"] == 2
+    assert listed[0]["name"] == "Cookies v2"
+
+
+def test_archive_personal_recipe(client, test_user: User, test_recipes: list):
+    proposal_id = client.post(
+        "/api/sodie/proposals",
+        json=_propose_body(str(test_recipes[0].id), key="archive-1"),
+    ).json()["proposal"]["id"]
+    personal_id = client.post(f"/api/sodie/proposals/{proposal_id}/approve").json()[
+        "personal_recipe_id"
+    ]
+    archived = client.delete(f"/api/personal-recipes/{personal_id}")
+    assert archived.status_code == 200
+    assert archived.json()["is_active"] is False
+    assert client.get("/api/personal-recipes").json() == []
+
+
 def test_propose_idempotency_key_returns_same_proposal(
     client, test_user: User, test_recipes: list
 ):
