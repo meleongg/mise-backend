@@ -23,7 +23,7 @@ from app.schemas.sodie_proposals import (
 )
 from app.utils.auth import get_current_user
 from app.constants import GENERATIVE_MODEL
-from app.services.sodie_chat_context import build_sodie_chat_context
+from app.services.sodie_chat_context import build_sodie_prompt_context
 from app.services.sodie_llm import (
     build_coach_prompt,
     draft_to_recipe_edit_patch,
@@ -37,13 +37,15 @@ router = APIRouter()
 
 
 def _coach_response(user: User, thread: SodieThread, content: str, db: Session) -> str:
-    context = build_sodie_chat_context(db, user)
-    page_context = f"\nACTIVE PAGE: {thread.scope}" + (
-        f" ({thread.context_id})" if thread.context_id else ""
+    context = build_sodie_prompt_context(
+        db,
+        user,
+        scope=thread.scope or "global",
+        context_id=thread.context_id,
     )
     return invoke_chat_model(
         ChatOpenAI(model=GENERATIVE_MODEL, temperature=0.5),
-        build_coach_prompt(content, context + page_context),
+        build_coach_prompt(content, context),
     )
 
 
@@ -79,10 +81,16 @@ def create_thread(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from app.services.sodie_chat_context import authorize_page_context
+
+    # Validate scope/context against trusted DB entities before creating the thread.
+    authorize_page_context(
+        db, current_user, payload.scope, payload.context_id
+    )
     thread = SodieThread(
         user_id=current_user.id,
         scope=payload.scope,
-        context_id=str(payload.context_id) if payload.context_id else None,
+        context_id=payload.context_id,
         is_temporary=payload.is_temporary,
     )
     db.add(thread)
