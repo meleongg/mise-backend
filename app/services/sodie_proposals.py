@@ -323,6 +323,138 @@ def apply_recipe_edit(db: Session, user: User, proposal_id: UUID) -> SodieAction
     return proposal
 
 
+def preference_snapshot(user: User) -> Dict[str, Any]:
+    return {
+        "max_prep_time_minutes": getattr(user, "max_prep_time_minutes", None),
+        "max_cook_time_minutes": getattr(user, "max_cook_time_minutes", None),
+        "preferred_portion_size": getattr(user, "preferred_portion_size", None),
+        "recipe_repeat_preference": getattr(user, "recipe_repeat_preference", None)
+        or "standard",
+    }
+
+
+def propose_preference_tweak(
+    db: Session,
+    user: User,
+    *,
+    patch: Dict[str, Any],
+    idempotency_key: str,
+    rationale: Optional[str] = None,
+    thread_id: Optional[UUID] = None,
+) -> SodieActionProposal:
+    existing = (
+        db.query(SodieActionProposal)
+        .filter(
+            SodieActionProposal.user_id == user.id,
+            SodieActionProposal.idempotency_key == idempotency_key,
+        )
+        .first()
+    )
+    if existing:
+        return existing
+
+    before = preference_snapshot(user)
+    allow = (
+        "max_prep_time_minutes",
+        "max_cook_time_minutes",
+        "preferred_portion_size",
+        "recipe_repeat_preference",
+    )
+    clean_patch = {k: patch[k] for k in allow if k in patch and patch[k] is not None}
+    if not clean_patch:
+        raise HTTPException(status_code=422, detail="Preference patch is empty")
+
+    after = {**before, **clean_patch}
+    diff_fields = {
+        key: {"before": before.get(key), "after": after.get(key)}
+        for key in clean_patch
+        if before.get(key) != after.get(key)
+    }
+    if not diff_fields:
+        raise HTTPException(status_code=422, detail="Preference patch makes no changes")
+
+    proposal = SodieActionProposal(
+        user_id=user.id,
+        thread_id=thread_id,
+        action_type="propose_preference_tweak",
+        status="pending",
+        source_recipe_id=None,
+        payload_json=_json_dumps(
+            {"before": before, "after": after, "patch": clean_patch}
+        ),
+        diff_json=_json_dumps({"fields": diff_fields}),
+        impact_json=_json_dumps(
+            {
+                "serving_text": "preference only",
+                "plan_schedule": "unchanged until next generation",
+                "shopping_list": "unchanged",
+                "list_reconciliation_queued": False,
+            }
+        ),
+        rationale=rationale,
+        idempotency_key=idempotency_key,
+        source_content_hash=content_hash(before),
+    )
+    db.add(proposal)
+    db.commit()
+    db.refresh(proposal)
+    return proposal
+
+
+def apply_preference_tweak(
+    db: Session, user: User, proposal_id: UUID
+) -> SodieActionProposal:
+    proposal = _get_owned_proposal(db, proposal_id, user.id)
+    if proposal.status == "applied":
+        return proposal
+    if proposal.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot approve proposal in status {proposal.status}",
+        )
+    if proposal.action_type != "propose_preference_tweak":
+        raise HTTPException(status_code=422, detail="Not a preference proposal")
+
+    current = preference_snapshot(user)
+    if content_hash(current) != proposal.source_content_hash:
+        proposal.status = "expired"
+        proposal.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        raise HTTPException(
+            status_code=409,
+            detail="Proposal is stale relative to current preferences",
+        )
+
+    payload = _json_loads(proposal.payload_json, {})
+    after = payload.get("after")
+    if not isinstance(after, dict):
+        raise HTTPException(status_code=500, detail="Proposal payload is invalid")
+
+    for key in (
+        "max_prep_time_minutes",
+        "max_cook_time_minutes",
+        "preferred_portion_size",
+        "recipe_repeat_preference",
+    ):
+        if key in after:
+            setattr(user, key, after[key])
+
+    now = datetime.now(timezone.utc)
+    proposal.status = "applied"
+    proposal.applied_at = now
+    proposal.updated_at = now
+    db.commit()
+    db.refresh(proposal)
+    return proposal
+
+
+def apply_proposal(db: Session, user: User, proposal_id: UUID) -> SodieActionProposal:
+    proposal = _get_owned_proposal(db, proposal_id, user.id)
+    if proposal.action_type == "propose_preference_tweak":
+        return apply_preference_tweak(db, user, proposal_id)
+    return apply_recipe_edit(db, user, proposal_id)
+
+
 def list_personal_recipes(db: Session, user: User) -> list[PersonalRecipe]:
     return (
         db.query(PersonalRecipe)
