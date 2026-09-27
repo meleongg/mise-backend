@@ -446,6 +446,33 @@ def test_create_proposal_from_request_needs_more_info(
     assert "sugar" in body["assistant_message"].lower() or "change" in body["assistant_message"].lower()
 
 
+def test_create_proposal_from_request_coach_qa_falls_through(
+    client, test_recipes: list, monkeypatch
+):
+    from app.schemas.sodie_proposals import RecipeEditPatchDraft
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_edit_patch",
+        lambda *_a, **_k: RecipeEditPatchDraft(
+            intent="coach_qa",
+            change_summary="Technique question.",
+            assistant_reply="ok",
+        ),
+    )
+    res = client.post(
+        "/api/sodie/proposals/from-request",
+        json={
+            "source_recipe_id": str(test_recipes[0].id),
+            "request": "How long does this bake?",
+            "idempotency_key": "from-request-coach-qa-1",
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["kind"] == "coach_qa"
+    assert body["proposal"] is None
+
+
 def test_create_proposal_from_request_clarify_keeps_pending(
     client, db: Session, test_user: User, test_recipes: list, monkeypatch
 ):

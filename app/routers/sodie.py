@@ -287,6 +287,10 @@ def create_proposal_from_request(
     )
     user_text = payload.request.strip()
 
+    if draft.intent == "coach_qa":
+        # FE falls through to coach chat; do not persist a stub reply here.
+        return ProposeRecipeEditResponse(kind="coach_qa", assistant_message=None)
+
     if draft.intent == "clarify":
         if not pending_proposal:
             assistant = draft.assistant_reply or (

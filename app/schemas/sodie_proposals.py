@@ -53,12 +53,13 @@ class RecipeEditPatchDraft(BaseModel):
     user request into notes.
     """
 
-    intent: Literal["propose_edit", "clarify", "needs_more_info"] = Field(
+    intent: Literal["propose_edit", "clarify", "needs_more_info", "coach_qa"] = Field(
         ...,
         description=(
             "propose_edit = build a new allowlisted patch; "
             "clarify = answer a question about a pending diff without changing it; "
-            "needs_more_info = cannot map the ask to a concrete change yet."
+            "needs_more_info = cannot map the ask to a concrete change yet; "
+            "coach_qa = cooking technique/timing/Q&A with no recipe content change."
         ),
     )
     title: Optional[str] = Field(None, min_length=1, max_length=200)
@@ -163,5 +164,5 @@ class SodieActionProposalResponse(BaseModel):
 
 class ProposeRecipeEditResponse(BaseModel):
     proposal: Optional[SodieActionProposalResponse] = None
-    kind: Literal["proposal", "clarify", "needs_more_info"] = "proposal"
+    kind: Literal["proposal", "clarify", "needs_more_info", "coach_qa"] = "proposal"
     assistant_message: Optional[str] = None
