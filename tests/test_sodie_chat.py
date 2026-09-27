@@ -78,6 +78,60 @@ def test_prompt_context_combines_profile_and_page(db, test_user, test_recipes):
     assert "Kitchen Mode" in text
 
 
+def test_settings_scope_omits_profile_and_plan(db, test_user, test_plan):
+    text = build_sodie_prompt_context(db, test_user, scope="settings")
+    assert "ACTIVE PAGE: settings" in text
+    assert "USER PROFILE:" not in text
+    assert "ACTIVE_PLAN:" not in text
+    assert test_user.first_name not in text
+
+
+def test_personal_recipe_snapshot_is_owner_only(db, test_user, test_recipes):
+    from app.models import PersonalRecipe
+
+    personal = PersonalRecipe(
+        user_id=test_user.id,
+        source_recipe_id=test_recipes[0].id,
+        name="My edited pasta",
+        ingredients='[{"name":"oats","measure":"1 cup"}]',
+        instructions='[{"text":"Stir."}]',
+        portion_size="2",
+        notes="extra oats",
+        current_revision=2,
+        is_active=True,
+    )
+    db.add(personal)
+    db.flush()
+
+    snapshot, week = authorize_page_context(
+        db, test_user, "personal_recipe", str(personal.id)
+    )
+    assert week is None
+    assert "ACTIVE PAGE: personal_recipe" in snapshot
+    assert "My edited pasta" in snapshot
+    assert "oats" in snapshot
+    assert "extra oats" in snapshot
+
+    other = User(
+        id=uuid.uuid4(),
+        email="other-personal@example.com",
+        first_name="Other",
+        last_name="User",
+        cuisine="Italian",
+        frequency=3,
+        skill_level="intermediate",
+        user_goal="Learn New Techniques",
+        hashed_password=password_utils.hash_password("OtherUser123!"),
+    )
+    db.add(other)
+    db.flush()
+    try:
+        authorize_page_context(db, other, "personal_recipe", str(personal.id))
+        assert False, "expected 404"
+    except HTTPException as exc:
+        assert exc.status_code == 404
+
+
 @patch("app.routers.plan_agent.ensure_user_text_allowed")
 @patch("app.routers.plan_agent.ChatOpenAI")
 def test_adaptive_chat_includes_context_in_prompt(
