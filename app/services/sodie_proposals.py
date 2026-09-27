@@ -11,7 +11,14 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models import PersonalRecipe, PersonalRecipeRevision, Recipe, SodieActionProposal, User
+from app.models import (
+    PersonalRecipe,
+    PersonalRecipeRevision,
+    Recipe,
+    SodieActionProposal,
+    SodieThread,
+    User,
+)
 from app.schemas.sodie_proposals import RecipeEditPatch
 
 
@@ -397,3 +404,29 @@ def archive_personal_recipe(
 
 def get_proposal(db: Session, user: User, proposal_id: UUID) -> SodieActionProposal:
     return _get_owned_proposal(db, proposal_id, user.id)
+
+
+def list_thread_proposals(
+    db: Session,
+    user: User,
+    thread_id: UUID,
+    *,
+    status: Optional[str] = None,
+) -> list[SodieActionProposal]:
+    """Owned proposals for a thread (used to reconstitute cards on resume)."""
+    # Ensure the thread belongs to the caller before listing.
+    thread = (
+        db.query(SodieThread)
+        .filter(SodieThread.id == thread_id, SodieThread.user_id == user.id)
+        .first()
+    )
+    if not thread:
+        raise HTTPException(status_code=404, detail="Sodie thread not found")
+
+    query = db.query(SodieActionProposal).filter(
+        SodieActionProposal.user_id == user.id,
+        SodieActionProposal.thread_id == thread_id,
+    )
+    if status:
+        query = query.filter(SodieActionProposal.status == status)
+    return query.order_by(SodieActionProposal.created_at.asc()).all()

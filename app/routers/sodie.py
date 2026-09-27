@@ -124,6 +124,23 @@ def get_thread(
     return _thread(db, thread_id, current_user.id)
 
 
+@router.get(
+    "/threads/{thread_id}/proposals",
+    response_model=List[SodieActionProposalResponse],
+)
+def list_thread_proposals(
+    thread_id: UUID,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Reconstitute proposal cards when resuming a thread (default: all statuses)."""
+    rows = proposals.list_thread_proposals(
+        db, current_user, thread_id, status=status
+    )
+    return [_proposal_response(row) for row in rows]
+
+
 @router.post("/threads/{thread_id}/messages", response_model=SodieMessageResponse)
 def add_message(
     thread_id: UUID,
