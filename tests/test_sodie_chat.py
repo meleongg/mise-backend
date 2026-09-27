@@ -144,6 +144,17 @@ def test_coach_prompt_analytics_mode_rules():
     assert "0/1" in prompt
 
 
+def test_analytics_scope_snapshot_uses_progress(
+    db, test_user, test_plan, test_recipe_progress
+):
+    text = build_sodie_prompt_context(db, test_user, scope="analytics")
+    assert "ACTIVE PAGE: analytics" in text
+    assert "USER PROFILE:" in text
+    assert "Recipes completed:" in text
+    assert "Feedback counts" in text
+    assert "do not invent" in text.lower() or "Do not invent" in text
+
+
 @patch("app.routers.sodie.ensure_user_text_allowed")
 @patch("app.routers.sodie.invoke_chat_model")
 def test_sodie_chat_includes_context_in_prompt(

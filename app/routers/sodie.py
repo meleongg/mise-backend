@@ -39,15 +39,17 @@ router = APIRouter()
 
 def _coach_response(user: User, thread: SodieThread, content: str, db: Session) -> str:
     ensure_user_text_allowed(content)
+    scope = thread.scope or "global"
     context = build_sodie_prompt_context(
         db,
         user,
-        scope=thread.scope or "global",
+        scope=scope,
         context_id=thread.context_id,
     )
+    mode = "analytics" if scope == "analytics" else "general_knowledge"
     return invoke_chat_model(
         ChatOpenAI(model=GENERATIVE_MODEL, temperature=0.5),
-        build_coach_prompt(content, context),
+        build_coach_prompt(content, context, mode=mode),
     )
 
 
