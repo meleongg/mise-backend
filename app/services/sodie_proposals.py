@@ -38,6 +38,14 @@ def _json_loads(value: Optional[str], default: Any = None, *, passthrough: bool 
         return default
 
 
+def parse_json_list(value: Any) -> List[Any]:
+    """Parse user allergen/diet JSON fields into a list."""
+    if isinstance(value, list):
+        return value
+    parsed = _json_loads(value if isinstance(value, str) else None, [])
+    return parsed if isinstance(parsed, list) else []
+
+
 def recipe_content_snapshot(recipe: Recipe) -> Dict[str, Any]:
     return {
         "title": recipe.name,
@@ -96,14 +104,29 @@ def build_diff(before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Any]:
     return {"fields": changed}
 
 
-def build_impact_preview() -> Dict[str, Any]:
+def build_impact_preview(
+    *,
+    allergen_conflict: bool = False,
+    diet_conflict: bool = False,
+    safety_notes: str | None = None,
+    confidence: str | None = None,
+) -> Dict[str, Any]:
     """Shopping/plan entry impact is deferred until weekly_plan_entries lands."""
-    return {
-        "serving_text": "Personal copy servings update on approve; catalog and plan schedule unchanged",
-        "plan_schedule": "unchanged",
-        "shopping_list": "deferred",
+    impact: Dict[str, Any] = {
+        "serving_text": (
+            "Personal copy servings update on approve; catalog recipe unchanged"
+        ),
+        "plan_schedule": "unchanged until weekly_plan_entries",
+        "shopping_list": "unchanged until weekly_plan_entries",
         "list_reconciliation_queued": False,
+        "allergen_conflict": bool(allergen_conflict),
+        "diet_conflict": bool(diet_conflict),
     }
+    if safety_notes:
+        impact["safety_notes"] = safety_notes
+    if confidence:
+        impact["confidence"] = confidence
+    return impact
 
 
 def serialize_personal_recipe(personal: PersonalRecipe) -> Dict[str, Any]:
@@ -171,6 +194,10 @@ def propose_recipe_edit(
     idempotency_key: str,
     rationale: Optional[str] = None,
     thread_id: Optional[UUID] = None,
+    allergen_conflict: bool = False,
+    diet_conflict: bool = False,
+    safety_notes: Optional[str] = None,
+    confidence: Optional[str] = None,
 ) -> SodieActionProposal:
     existing = (
         db.query(SodieActionProposal)
@@ -201,7 +228,14 @@ def propose_recipe_edit(
         source_recipe_id=recipe.id,
         payload_json=_json_dumps({"before": before, "after": after, "patch": patch.model_dump(exclude_none=True)}),
         diff_json=_json_dumps(diff),
-        impact_json=_json_dumps(build_impact_preview()),
+        impact_json=_json_dumps(
+            build_impact_preview(
+                allergen_conflict=allergen_conflict,
+                diet_conflict=diet_conflict,
+                safety_notes=safety_notes,
+                confidence=confidence,
+            )
+        ),
         rationale=rationale,
         idempotency_key=idempotency_key,
         source_content_hash=content_hash(before),

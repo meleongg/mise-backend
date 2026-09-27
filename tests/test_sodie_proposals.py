@@ -89,7 +89,7 @@ def test_approve_creates_personal_lineage_without_mutating_catalog(
     assert created.status_code == 200
     proposal_id = created.json()["proposal"]["id"]
     assert created.json()["proposal"]["status"] == "pending"
-    assert created.json()["proposal"]["impact"]["shopping_list"] == "deferred"
+    assert created.json()["proposal"]["impact"]["shopping_list"] == "unchanged until weekly_plan_entries"
     assert created.json()["proposal"]["impact"]["list_reconciliation_queued"] is False
 
     approved = client.post(f"/api/sodie/proposals/{proposal_id}/approve")
@@ -279,6 +279,9 @@ def test_recipe_edit_patch_prompt_routes_taste_to_ingredients():
 
     assert "NEVER return only the changed ingredient" in RECIPE_EDIT_PATCH_SYSTEM
     assert "COMPLETE recipe list" in RECIPE_EDIT_PATCH_SYSTEM
+    assert "suggest_swap" in RECIPE_EDIT_PATCH_SYSTEM
+    assert "out_of_scope" in RECIPE_EDIT_PATCH_SYSTEM
+    assert "amount_ambiguous" in RECIPE_EDIT_PATCH_SYSTEM
     messages = build_recipe_edit_patch_prompt(
         {
             "title": "Cookies",
@@ -286,8 +289,11 @@ def test_recipe_edit_patch_prompt_routes_taste_to_ingredients():
             "notes": None,
         },
         "can we make the cookies saltier",
+        user_profile={"allergens": ["peanuts"], "dietary_restrictions": []},
     )
     assert "CURRENT RECIPE" in messages[1].content
+    assert "USER PROFILE" in messages[1].content
+    assert "peanuts" in messages[1].content
     assert "can we make the cookies saltier" in messages[1].content
     assert "PENDING PROPOSAL: none" in messages[1].content
 
@@ -299,7 +305,7 @@ def test_create_proposal_from_request_uses_structured_patch(
 
     recipe = test_recipes[0]
 
-    def fake_generate(snapshot, request, pending_diff=None):
+    def fake_generate(snapshot, request, pending_diff=None, user_profile=None):
         assert "saltier" in request.lower()
         return RecipeEditPatchDraft(
             intent="propose_edit",
@@ -808,3 +814,119 @@ def test_recipe_pick_prompt_requires_candidates():
     )
     assert "CANDIDATES" in messages[1].content
     assert "What should I cook?" in messages[1].content
+
+
+def test_from_request_suggest_swap(client, test_recipes: list, monkeypatch):
+    from app.schemas.sodie_proposals import RecipeEditPatchDraft
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_edit_patch",
+        lambda *_a, **_k: RecipeEditPatchDraft(
+            intent="suggest_swap",
+            change_summary="Different dish.",
+            assistant_reply="Use Swap on the recipe card for a different dish.",
+        ),
+    )
+    res = client.post(
+        "/api/sodie/proposals/from-request",
+        json={
+            "source_recipe_id": str(test_recipes[0].id),
+            "request": "this is too hard — give me something else",
+            "idempotency_key": "enrich-swap-1",
+        },
+    )
+    assert res.status_code == 200
+    assert res.json()["kind"] == "suggest_swap"
+    assert res.json()["proposal"] is None
+    assert "swap" in res.json()["assistant_message"].lower()
+
+
+def test_from_request_out_of_scope(client, test_recipes: list, monkeypatch):
+    from app.schemas.sodie_proposals import RecipeEditPatchDraft
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_edit_patch",
+        lambda *_a, **_k: RecipeEditPatchDraft(
+            intent="out_of_scope",
+            change_summary="Schedule ask.",
+            assistant_reply="Move meals on Weekly Plan — I won’t patch the recipe for that.",
+        ),
+    )
+    res = client.post(
+        "/api/sodie/proposals/from-request",
+        json={
+            "source_recipe_id": str(test_recipes[0].id),
+            "request": "move this dinner to Tuesday",
+            "idempotency_key": "enrich-scope-1",
+        },
+    )
+    assert res.status_code == 200
+    assert res.json()["kind"] == "out_of_scope"
+    assert res.json()["proposal"] is None
+
+
+def test_from_request_amount_ambiguous_becomes_needs_more_info(
+    client, test_recipes: list, monkeypatch
+):
+    from app.schemas.sodie_proposals import IngredientLine, RecipeEditPatchDraft
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_edit_patch",
+        lambda *_a, **_k: RecipeEditPatchDraft(
+            intent="propose_edit",
+            confidence="medium",
+            amount_ambiguous=True,
+            ingredients=[IngredientLine(name="oil", measure="some")],
+            change_summary="Ambiguous oil amount.",
+            assistant_reply="How much oil should I add?",
+        ),
+    )
+    res = client.post(
+        "/api/sodie/proposals/from-request",
+        json={
+            "source_recipe_id": str(test_recipes[0].id),
+            "request": "add some oil",
+            "idempotency_key": "enrich-ambig-1",
+        },
+    )
+    assert res.status_code == 200
+    assert res.json()["kind"] == "needs_more_info"
+    assert res.json()["proposal"] is None
+
+
+def test_from_request_stores_allergen_safety_on_proposal(
+    client, test_user: User, test_recipes: list, monkeypatch
+):
+    from app.schemas.sodie_proposals import IngredientLine, RecipeEditPatchDraft
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_edit_patch",
+        lambda *_a, **_k: RecipeEditPatchDraft(
+            intent="propose_edit",
+            confidence="high",
+            allergen_conflict=True,
+            safety_notes="Adds peanuts; you listed peanuts as an allergen.",
+            ingredients=[
+                IngredientLine(name="flour", measure="2 cups"),
+                IngredientLine(name="peanuts", measure="1/2 cup"),
+            ],
+            change_summary="Added peanuts.",
+            assistant_reply="Here’s a proposal — note the allergen warning.",
+        ),
+    )
+    res = client.post(
+        "/api/sodie/proposals/from-request",
+        json={
+            "source_recipe_id": str(test_recipes[0].id),
+            "request": "add peanuts",
+            "idempotency_key": "enrich-allergen-1",
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["kind"] == "proposal"
+    impact = body["proposal"]["impact"]
+    assert impact["allergen_conflict"] is True
+    assert "peanut" in (impact.get("safety_notes") or "").lower()
+    assert impact["plan_schedule"] == "unchanged until weekly_plan_entries"
+    assert impact["shopping_list"] == "unchanged until weekly_plan_entries"

@@ -53,14 +53,44 @@ class RecipeEditPatchDraft(BaseModel):
     user request into notes.
     """
 
-    intent: Literal["propose_edit", "clarify", "needs_more_info", "coach_qa"] = Field(
+    intent: Literal[
+        "propose_edit",
+        "clarify",
+        "needs_more_info",
+        "coach_qa",
+        "suggest_swap",
+        "out_of_scope",
+    ] = Field(
         ...,
         description=(
             "propose_edit = build a new allowlisted patch; "
             "clarify = answer a question about a pending diff without changing it; "
-            "needs_more_info = cannot map the ask to a concrete change yet; "
-            "coach_qa = cooking technique/timing/Q&A with no recipe content change."
+            "needs_more_info = cannot map the ask to a concrete change yet / amounts ambiguous; "
+            "coach_qa = cooking technique/timing/Q&A with no recipe content change; "
+            "suggest_swap = dish should be a different catalog recipe (point at Swap); "
+            "out_of_scope = schedule/shop/memory/account ask — do not fake a recipe patch."
         ),
+    )
+    confidence: Literal["high", "medium", "low"] = Field(
+        "high",
+        description="How sure the mapping is; low/medium with inventable amounts should prefer needs_more_info.",
+    )
+    amount_ambiguous: bool = Field(
+        False,
+        description="True when the ask needs a measure the model would have to invent.",
+    )
+    allergen_conflict: bool = Field(
+        False,
+        description="True if the proposed edit likely conflicts with the cook's allergens.",
+    )
+    diet_conflict: bool = Field(
+        False,
+        description="True if the proposed edit likely conflicts with dietary restrictions.",
+    )
+    safety_notes: Optional[str] = Field(
+        None,
+        max_length=400,
+        description="Short safety callout when allergen_conflict or diet_conflict is true.",
     )
     title: Optional[str] = Field(None, min_length=1, max_length=200)
     servings: Optional[str] = Field(None, max_length=50)
@@ -90,7 +120,7 @@ class RecipeEditPatchDraft(BaseModel):
         ...,
         min_length=1,
         max_length=500,
-        description="Short user-facing reply for clarify / needs_more_info (and optional intro for propose_edit).",
+        description="Short user-facing reply for clarify / needs_more_info / swap / out_of_scope.",
     )
 
 
@@ -164,7 +194,14 @@ class SodieActionProposalResponse(BaseModel):
 
 class ProposeRecipeEditResponse(BaseModel):
     proposal: Optional[SodieActionProposalResponse] = None
-    kind: Literal["proposal", "clarify", "needs_more_info", "coach_qa"] = "proposal"
+    kind: Literal[
+        "proposal",
+        "clarify",
+        "needs_more_info",
+        "coach_qa",
+        "suggest_swap",
+        "out_of_scope",
+    ] = "proposal"
     assistant_message: Optional[str] = None
 
 

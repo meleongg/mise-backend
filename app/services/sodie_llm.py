@@ -58,17 +58,36 @@ RECIPE_EDIT_PATCH_SYSTEM = (
     "about that pending diff (not requesting a new change). Do not fill patch "
     "fields. Answer in assistant_reply; the pending diff stays unchanged.\n"
     "- needs_more_info — the ask is an edit request that is too vague to map to "
-    "a concrete field change (e.g. “make it better”). Do not fill patch fields. "
-    "Ask a brief clarifying question in assistant_reply.\n"
-    "- coach_qa — cooking technique, timing, prep, allergens, or general Q&A "
-    "with NO request to change this recipe’s ingredients/steps/servings/title/"
-    "notes. Do not fill patch fields. Put a one-word placeholder in "
-    "assistant_reply (e.g. “ok”); the app answers via coach chat separately.\n"
+    "a concrete field change, OR amounts would have to be invented. Do not fill "
+    "patch fields. Ask a brief clarifying question in assistant_reply. Set "
+    "amount_ambiguous=true when measures are missing.\n"
+    "- coach_qa — cooking technique, timing, prep, or general Q&A with NO "
+    "request to change this recipe’s ingredients/steps/servings/title/notes. "
+    "Do not fill patch fields. Put a one-word placeholder in assistant_reply "
+    "(e.g. “ok”); the app answers via coach chat separately.\n"
+    "- suggest_swap — the cook needs a *different* dish (complexity/fit), not "
+    "an edit of this recipe. Do not fill patch fields. Tell them to use the "
+    "Swap control on the plan/recipe card in assistant_reply.\n"
+    "- out_of_scope — schedule/weekly plan changes, shopping list edits, "
+    "durable memory, account/settings — do NOT fake a recipe patch. Explain "
+    "briefly in assistant_reply where to do that instead.\n"
     "If there is no pending proposal, never choose clarify — use propose_edit, "
-    "needs_more_info, or coach_qa.\n"
+    "needs_more_info, coach_qa, suggest_swap, or out_of_scope.\n"
     "Examples: “add more salt” / “make it saltier” / “scale for 4” → propose_edit. "
     "“How long does this bake?” / “Can I prep ahead?” → coach_qa. "
-    "“Make it better” → needs_more_info.\n\n"
+    "“Make it better” → needs_more_info. "
+    "“This is too hard — different recipe” → suggest_swap. "
+    "“Move this to Tuesday” / “add to shopping” → out_of_scope.\n\n"
+    "Confidence & ambiguity:\n"
+    "- Set confidence high only when the field mapping is clear.\n"
+    "- If the user asks for an amount you would invent (e.g. “add some oil” "
+    "with no measure), use needs_more_info + amount_ambiguous=true instead of "
+    "guessing.\n\n"
+    "Safety vs USER PROFILE:\n"
+    "- Compare proposed ingredients against the cook’s allergens and dietary "
+    "restrictions in USER PROFILE.\n"
+    "- If propose_edit would introduce a conflict, still may propose_edit but "
+    "set allergen_conflict and/or diet_conflict and explain in safety_notes.\n\n"
     "Minimal-change rule (critical):\n"
     "- Change ONLY what the user asked for. Do not rewrite unrelated ingredients, "
     "steps, title, or notes.\n"
@@ -95,7 +114,8 @@ RECIPE_EDIT_PATCH_SYSTEM = (
     "row only if none exists.\n"
     "- 'Less sugar' / 'less sweet' → decrease sugar/sweetener measures only.\n"
     "- Keep measures human-readable (e.g. '1 tsp', '1/2 cup').\n\n"
-    "change_summary briefly explains the edit or why clarify/needs_more_info.\n"
+    "change_summary briefly explains the edit or why clarify/needs_more_info/"
+    "suggest_swap/out_of_scope.\n"
 )
 
 
@@ -143,9 +163,11 @@ def build_recipe_edit_patch_prompt(
     user_request: str,
     *,
     pending_diff: Dict[str, Any] | None = None,
+    user_profile: Dict[str, Any] | None = None,
 ) -> list[BaseMessage]:
     """Messages for structured recipe-edit classification + patch generation."""
     recipe_json = json.dumps(recipe_snapshot, indent=2, default=str)
+    profile_json = json.dumps(user_profile or {}, indent=2, default=str)
     if pending_diff is None:
         pending_block = "PENDING PROPOSAL: none\n"
     else:
@@ -155,6 +177,7 @@ def build_recipe_edit_patch_prompt(
         )
     user_block = (
         f"CURRENT RECIPE (JSON):\n{recipe_json}\n\n"
+        f"USER PROFILE (allergens/diet — for safety flags):\n{profile_json}\n\n"
         f"{pending_block}\n"
         f"USER MESSAGE:\n{user_request.strip()}\n\n"
         "Classify intent and produce the structured output."
@@ -266,12 +289,16 @@ def generate_recipe_edit_patch(
     user_request: str,
     *,
     pending_diff: Dict[str, Any] | None = None,
+    user_profile: Dict[str, Any] | None = None,
 ) -> RecipeEditPatchDraft:
     """LLM classifies intent and maps NL → allowlisted patch fields when editing."""
     llm = ChatOpenAI(model=GENERATIVE_MODEL, temperature=0)
     structured = llm.with_structured_output(RecipeEditPatchDraft)
     messages = build_recipe_edit_patch_prompt(
-        recipe_snapshot, user_request, pending_diff=pending_diff
+        recipe_snapshot,
+        user_request,
+        pending_diff=pending_diff,
+        user_profile=user_profile,
     )
     try:
         draft = structured.invoke(messages)
