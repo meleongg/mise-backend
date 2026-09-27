@@ -2,7 +2,14 @@ import uuid
 import json
 from typing import List
 from sqlalchemy.orm import Session
-from app.models import User, WeeklyPlan, UserRecipeProgress, Recipe, RecipeSuggestion
+from app.models import (
+    User,
+    WeeklyPlan,
+    WeeklyPlanEntry,
+    UserRecipeProgress,
+    Recipe,
+    RecipeSuggestion,
+)
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import select
 from fastapi import HTTPException
@@ -63,9 +70,100 @@ def swap_recipe_in_schedule(recipe_schedule_json: str, old_id: str, new_id: str)
     return json.dumps(schedule)
 
 
+def _recipe_entry_snapshot(recipe: Recipe) -> str:
+    return json.dumps(
+        {
+            "id": str(recipe.id),
+            "name": recipe.name,
+            "cuisine": recipe.cuisine,
+            "difficulty": recipe.difficulty,
+            "ingredients": recipe.ingredients,
+            "instructions": recipe.instructions,
+            "prep_time_minutes": recipe.prep_time_minutes,
+            "cook_time_minutes": recipe.cook_time_minutes,
+            "portion_size": getattr(recipe, "portion_size", None),
+            "image_url": recipe.image_url,
+        },
+        default=str,
+    )
+
+
+def serialize_plan_entry(entry: WeeklyPlanEntry) -> dict:
+    return {
+        "id": entry.id,
+        "weekly_plan_id": entry.weekly_plan_id,
+        "position": entry.position,
+        "catalog_recipe_id": entry.catalog_recipe_id,
+        "personal_recipe_id": entry.personal_recipe_id,
+        "recipe_snapshot": json.loads(entry.recipe_snapshot)
+        if entry.recipe_snapshot
+        else {},
+        "selected_servings": entry.selected_servings,
+        "lifecycle_state": entry.lifecycle_state,
+        "created_at": entry.created_at,
+        "updated_at": entry.updated_at,
+    }
+
+
+def sync_plan_entries_from_schedule(plan: WeeklyPlan, db: Session) -> list[WeeklyPlanEntry]:
+    """Replace plan entries to match recipe_schedule (catalog refs for this slice)."""
+    recipe_ids = parse_recipe_schedule(plan.recipe_schedule)
+    db.query(WeeklyPlanEntry).filter(
+        WeeklyPlanEntry.weekly_plan_id == plan.id
+    ).delete(synchronize_session=False)
+
+    if not recipe_ids:
+        db.flush()
+        return []
+
+    recipes = {
+        str(r.id): r
+        for r in db.query(Recipe)
+        .filter(Recipe.id.in_([uuid.UUID(rid) for rid in recipe_ids]))
+        .all()
+    }
+
+    now = datetime.now(timezone.utc)
+    entries: list[WeeklyPlanEntry] = []
+    for idx, recipe_id in enumerate(recipe_ids):
+        recipe = recipes.get(recipe_id)
+        if not recipe:
+            continue
+        entry = WeeklyPlanEntry(
+            id=uuid.uuid4(),
+            weekly_plan_id=plan.id,
+            position=idx,
+            catalog_recipe_id=recipe.id,
+            personal_recipe_id=None,
+            recipe_snapshot=_recipe_entry_snapshot(recipe),
+            selected_servings=getattr(recipe, "portion_size", None),
+            lifecycle_state="planned",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(entry)
+        entries.append(entry)
+    db.flush()
+    return entries
+
+
+def ensure_plan_entries(plan: WeeklyPlan, db: Session) -> list[WeeklyPlanEntry]:
+    """Lazy-backfill entries from recipe_schedule when missing."""
+    existing = (
+        db.query(WeeklyPlanEntry)
+        .filter(WeeklyPlanEntry.weekly_plan_id == plan.id)
+        .order_by(WeeklyPlanEntry.position.asc())
+        .all()
+    )
+    if existing:
+        return existing
+    return sync_plan_entries_from_schedule(plan, db)
+
+
 class WeeklyPlanService:
     def load_recipes_for_plan(self, plan: WeeklyPlan, db: Session) -> WeeklyPlan:
         """Load the full Recipe objects for a WeeklyPlan and attach them as a property."""
+        ensure_plan_entries(plan, db)
         recipe_ids = parse_recipe_schedule(plan.recipe_schedule)
         recipe_uuids = [uuid.UUID(rid) for rid in recipe_ids]
 
@@ -80,6 +178,12 @@ class WeeklyPlanService:
 
         # Attach as a dynamic attribute (Pydantic will pick it up)
         plan.recipes = ordered_recipes
+        plan.entries = (
+            db.query(WeeklyPlanEntry)
+            .filter(WeeklyPlanEntry.weekly_plan_id == plan.id)
+            .order_by(WeeklyPlanEntry.position.asc())
+            .all()
+        )
         return plan
 
     def get_user_exclusion_ids(
@@ -265,6 +369,7 @@ class WeeklyPlanService:
                 clear_existing=True,
             )
 
+            sync_plan_entries_from_schedule(existing_plan, db)
             db.commit()
             db.refresh(existing_plan)
 
@@ -295,6 +400,8 @@ class WeeklyPlanService:
             source="plan",
             db=db,
         )
+
+        sync_plan_entries_from_schedule(new_plan, db)
 
         # Commit everything
         db.commit()

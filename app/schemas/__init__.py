@@ -1,7 +1,8 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional, Literal, Any
+from typing import List, Optional, Literal, Any, Dict
 from datetime import datetime
 from uuid import UUID
+import json
 
 # --- Password policy ---
 # Standard baseline aligned with NIST 800-63B guidance: length is the primary
@@ -315,6 +316,36 @@ class RecipeResponse(BaseModel):
 
 
 # Weekly Plan schemas
+class WeeklyPlanEntryResponse(BaseModel):
+    id: UUID
+    weekly_plan_id: UUID
+    position: int
+    catalog_recipe_id: Optional[UUID] = None
+    personal_recipe_id: Optional[UUID] = None
+    recipe_snapshot: Dict[str, Any] = {}
+    selected_servings: Optional[str] = None
+    lifecycle_state: str = "planned"
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("recipe_snapshot", mode="before")
+    @classmethod
+    def _parse_recipe_snapshot(cls, value: Any) -> Dict[str, Any]:
+        if value is None or value == "":
+            return {}
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return {}
+
+
 class WeeklyPlanResponse(BaseModel):
     id: UUID
     user_id: UUID
@@ -323,6 +354,7 @@ class WeeklyPlanResponse(BaseModel):
     generated_at: datetime
     is_unlocked: bool
     recipes: List[RecipeResponse] = []
+    entries: List[WeeklyPlanEntryResponse] = []
     swap_count: int = 0
 
     model_config = {"from_attributes": True}

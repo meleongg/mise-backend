@@ -6,8 +6,16 @@ import uuid
 from app.database import get_db
 from app.utils.auth import get_current_user, require_same_user
 from app.models import User, Recipe, WeeklyPlan
-from app.schemas import WeeklyPlanResponse, RecipeResponse
-from app.services.weekly_plan import WeeklyPlanService, parse_recipe_schedule
+from app.schemas import (
+    WeeklyPlanResponse,
+    WeeklyPlanEntryResponse,
+    RecipeResponse,
+)
+from app.services.weekly_plan import (
+    WeeklyPlanService,
+    parse_recipe_schedule,
+    serialize_plan_entry,
+)
 
 router = APIRouter()
 plan_service = WeeklyPlanService()
@@ -61,6 +69,10 @@ async def get_weekly_plan(
     plan_response.recipes = [
         RecipeResponse.model_validate(recipe) for recipe in plan.recipes
     ]
+    plan_response.entries = [
+        WeeklyPlanEntryResponse.model_validate(serialize_plan_entry(entry))
+        for entry in getattr(plan, "entries", []) or []
+    ]
 
     return plan_response
 
@@ -87,6 +99,10 @@ async def get_all_weekly_plans(
         plan_response = WeeklyPlanResponse.model_validate(plan)
         plan_response.recipes = [
             RecipeResponse.model_validate(recipe) for recipe in plan.recipes
+        ]
+        plan_response.entries = [
+            WeeklyPlanEntryResponse.model_validate(serialize_plan_entry(entry))
+            for entry in getattr(plan, "entries", []) or []
         ]
         response_plans.append(plan_response)
 
