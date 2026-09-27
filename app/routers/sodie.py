@@ -16,6 +16,7 @@ from app.schemas import (
 )
 from app.schemas.sodie_proposals import (
     ClarifyProposalRequest,
+    ProposePreferenceFromRequest,
     ProposeRecipeEditFromRequest,
     ProposeRecipeEditRequest,
     ProposeRecipeEditResponse,
@@ -24,10 +25,14 @@ from app.schemas.sodie_proposals import (
 from app.utils.auth import get_current_user
 from app.constants import GENERATIVE_MODEL
 from app.services.content_moderation import ensure_user_text_allowed
-from app.services.sodie_chat_context import build_sodie_prompt_context
+from app.services.sodie_chat_context import (
+    authorize_page_context,
+    build_sodie_prompt_context,
+)
 from app.services.sodie_llm import (
     build_coach_prompt,
     draft_to_recipe_edit_patch,
+    generate_preference_tweak,
     generate_recipe_edit_patch,
     invoke_chat_model,
 )
@@ -366,6 +371,119 @@ def create_proposal_from_request(
     )
 
 
+@router.post(
+    "/proposals/preferences/from-request",
+    response_model=ProposeRecipeEditResponse,
+)
+def create_preference_proposal_from_request(
+    payload: ProposePreferenceFromRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Classify analytics/preference follow-up; propose allowlisted preference tweaks."""
+    ensure_user_text_allowed(payload.request)
+    thread: Optional[SodieThread] = None
+    if payload.thread_id:
+        thread = _thread(db, payload.thread_id, current_user.id)
+
+    pending_proposal = None
+    if payload.pending_proposal_id:
+        pending_proposal = proposals.get_proposal(
+            db, current_user, payload.pending_proposal_id
+        )
+        if pending_proposal.status != "pending":
+            raise HTTPException(
+                status_code=409, detail="Pending proposal is no longer pending"
+            )
+        if pending_proposal.action_type != "propose_preference_tweak":
+            raise HTTPException(
+                status_code=422, detail="Pending proposal is not a preference tweak"
+            )
+
+    analytics_snapshot, _week = authorize_page_context(
+        db, current_user, "analytics", None
+    )
+    prefs = proposals.preference_snapshot(current_user)
+    draft = generate_preference_tweak(
+        prefs, analytics_snapshot, payload.request.strip()
+    )
+    user_text = payload.request.strip()
+
+    if draft.intent == "coach_qa":
+        return ProposeRecipeEditResponse(kind="coach_qa", assistant_message=None)
+
+    if draft.intent == "needs_more_info":
+        assistant = draft.assistant_reply or "Which preference should we change?"
+        if thread:
+            _append_thread_turn(
+                db, thread, user_content=user_text, ai_content=assistant
+            )
+        return ProposeRecipeEditResponse(
+            kind="needs_more_info",
+            assistant_message=assistant,
+        )
+
+    patch = {
+        key: value
+        for key, value in {
+            "max_prep_time_minutes": draft.max_prep_time_minutes,
+            "max_cook_time_minutes": draft.max_cook_time_minutes,
+            "preferred_portion_size": draft.preferred_portion_size,
+            "recipe_repeat_preference": draft.recipe_repeat_preference,
+        }.items()
+        if value is not None
+    }
+    if not patch:
+        assistant = draft.assistant_reply or (
+            "Tell me which preference to change — prep time, cook time, "
+            "portion size, or recipe repeat cooldown."
+        )
+        if thread:
+            _append_thread_turn(
+                db, thread, user_content=user_text, ai_content=assistant
+            )
+        return ProposeRecipeEditResponse(
+            kind="needs_more_info",
+            assistant_message=assistant,
+        )
+
+    if pending_proposal:
+        proposals.reject_proposal(db, current_user, pending_proposal.id)
+
+    try:
+        proposal = proposals.propose_preference_tweak(
+            db,
+            current_user,
+            patch=patch,
+            idempotency_key=payload.idempotency_key,
+            rationale=draft.change_summary or payload.request,
+            thread_id=payload.thread_id,
+        )
+    except HTTPException as exc:
+        if exc.status_code == 422:
+            assistant = draft.assistant_reply or str(exc.detail)
+            if thread:
+                _append_thread_turn(
+                    db, thread, user_content=user_text, ai_content=assistant
+                )
+            return ProposeRecipeEditResponse(
+                kind="needs_more_info",
+                assistant_message=assistant,
+            )
+        raise
+
+    assistant = draft.assistant_reply or "Here’s a preference tweak for your review."
+    if thread:
+        _append_thread_turn(
+            db, thread, user_content=user_text, ai_content=assistant
+        )
+    return ProposeRecipeEditResponse(
+        kind="proposal",
+        proposal=_proposal_response(proposal),
+        assistant_message=assistant,
+    )
+
+
 @router.get("/proposals/{proposal_id}", response_model=SodieActionProposalResponse)
 def get_proposal(
     proposal_id: UUID,
@@ -381,7 +499,7 @@ def approve_proposal(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return _proposal_response(proposals.apply_recipe_edit(db, current_user, proposal_id))
+    return _proposal_response(proposals.apply_proposal(db, current_user, proposal_id))
 
 
 @router.post("/proposals/{proposal_id}/reject", response_model=SodieActionProposalResponse)

@@ -508,3 +508,199 @@ def test_create_proposal_from_request_clarify_keeps_pending(
     assert body["proposal"] is None
     still = client.get(f"/api/sodie/proposals/{proposal_id}")
     assert still.json()["status"] == "pending"
+
+
+def test_preference_tweak_prompt_allowlists_fields():
+    from app.services.sodie_llm import (
+        PREFERENCE_TWEAK_SYSTEM,
+        build_preference_tweak_prompt,
+    )
+
+    assert "propose_preference" in PREFERENCE_TWEAK_SYSTEM
+    assert "max_cook_time_minutes" in PREFERENCE_TWEAK_SYSTEM
+    assert "Never invent dietary" in PREFERENCE_TWEAK_SYSTEM
+    messages = build_preference_tweak_prompt(
+        {"max_cook_time_minutes": 60},
+        "ACTIVE PAGE: analytics\ncompletion: 2/5",
+        "Recipes take too long",
+    )
+    assert "CURRENT PREFERENCES" in messages[1].content
+    assert "Recipes take too long" in messages[1].content
+
+
+def test_preference_from_request_proposes_and_approve_applies(
+    client, db: Session, test_user: User, monkeypatch
+):
+    from app.schemas.sodie_proposals import PreferenceTweakDraft
+
+    test_user.max_cook_time_minutes = 60
+    test_user.max_prep_time_minutes = 30
+    db.commit()
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_preference_tweak",
+        lambda *_a, **_k: PreferenceTweakDraft(
+            intent="propose_preference",
+            max_cook_time_minutes=45,
+            change_summary="Shorter cook time from too-hard feedback.",
+            assistant_reply="Here’s a cook-time tweak for your review.",
+        ),
+    )
+
+    created = client.post(
+        "/api/sodie/proposals/preferences/from-request",
+        json={
+            "request": "Recipes feel too hard — shorten my max cook time.",
+            "idempotency_key": "pref-cook-1",
+        },
+    )
+    assert created.status_code == 200
+    body = created.json()
+    assert body["kind"] == "proposal"
+    proposal = body["proposal"]
+    assert proposal["action_type"] == "propose_preference_tweak"
+    assert proposal["status"] == "pending"
+    assert proposal["diff"]["fields"]["max_cook_time_minutes"] == {
+        "before": 60,
+        "after": 45,
+    }
+    assert proposal["impact"]["plan_schedule"] == "unchanged until next generation"
+
+    approved = client.post(f"/api/sodie/proposals/{proposal['id']}/approve")
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "applied"
+
+    db.refresh(test_user)
+    assert test_user.max_cook_time_minutes == 45
+    assert test_user.max_prep_time_minutes == 30
+
+
+def test_preference_from_request_coach_qa_falls_through(
+    client, test_user: User, monkeypatch
+):
+    from app.schemas.sodie_proposals import PreferenceTweakDraft
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_preference_tweak",
+        lambda *_a, **_k: PreferenceTweakDraft(
+            intent="coach_qa",
+            change_summary="Analytics question.",
+            assistant_reply="ok",
+        ),
+    )
+    res = client.post(
+        "/api/sodie/proposals/preferences/from-request",
+        json={
+            "request": "How is my streak looking?",
+            "idempotency_key": "pref-coach-qa-1",
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["kind"] == "coach_qa"
+    assert body["proposal"] is None
+
+
+def test_preference_from_request_needs_more_info(client, test_user: User, monkeypatch):
+    from app.schemas.sodie_proposals import PreferenceTweakDraft
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_preference_tweak",
+        lambda *_a, **_k: PreferenceTweakDraft(
+            intent="needs_more_info",
+            change_summary="Vague.",
+            assistant_reply="Which preference — prep time, cook time, portions, or repeat?",
+        ),
+    )
+    res = client.post(
+        "/api/sodie/proposals/preferences/from-request",
+        json={
+            "request": "change my preferences somehow",
+            "idempotency_key": "pref-vague-1",
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["kind"] == "needs_more_info"
+    assert body["proposal"] is None
+    assert "prep" in body["assistant_message"].lower() or "preference" in body[
+        "assistant_message"
+    ].lower()
+
+
+def test_preference_approve_expires_when_prefs_changed(
+    client, db: Session, test_user: User, monkeypatch
+):
+    from app.schemas.sodie_proposals import PreferenceTweakDraft
+
+    test_user.max_cook_time_minutes = 60
+    db.commit()
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_preference_tweak",
+        lambda *_a, **_k: PreferenceTweakDraft(
+            intent="propose_preference",
+            max_cook_time_minutes=40,
+            change_summary="Lower cook time.",
+            assistant_reply="Here’s a tweak.",
+        ),
+    )
+    created = client.post(
+        "/api/sodie/proposals/preferences/from-request",
+        json={
+            "request": "Shorten cook time",
+            "idempotency_key": "pref-stale-1",
+        },
+    )
+    assert created.status_code == 200
+    proposal_id = created.json()["proposal"]["id"]
+
+    test_user.max_cook_time_minutes = 55
+    db.commit()
+
+    approved = client.post(f"/api/sodie/proposals/{proposal_id}/approve")
+    assert approved.status_code == 409
+    stale = client.get(f"/api/sodie/proposals/{proposal_id}")
+    assert stale.json()["status"] == "expired"
+
+
+def test_preference_from_request_persists_on_analytics_thread(
+    client, db: Session, test_user: User, monkeypatch
+):
+    from app.schemas.sodie_proposals import PreferenceTweakDraft
+
+    test_user.preferred_portion_size = "2"
+    db.commit()
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_preference_tweak",
+        lambda *_a, **_k: PreferenceTweakDraft(
+            intent="propose_preference",
+            preferred_portion_size="4",
+            change_summary="Larger portions.",
+            assistant_reply="Here’s a portion-size tweak.",
+        ),
+    )
+    thread_id = client.post(
+        "/api/sodie/threads",
+        json={"scope": "analytics"},
+    ).json()["id"]
+    res = client.post(
+        "/api/sodie/proposals/preferences/from-request",
+        json={
+            "request": "Bump my preferred portion size",
+            "idempotency_key": "pref-thread-1",
+            "thread_id": thread_id,
+        },
+    )
+    assert res.status_code == 200
+    msgs = client.get(f"/api/sodie/threads/{thread_id}").json()["messages"]
+    assert [m["sender"] for m in msgs] == ["user", "ai"]
+    assert "portion" in msgs[1]["content"].lower()
+    listed = client.get(
+        f"/api/sodie/threads/{thread_id}/proposals",
+        params={"status": "pending"},
+    )
+    assert listed.status_code == 200
+    assert len(listed.json()) == 1
+    assert listed.json()[0]["action_type"] == "propose_preference_tweak"

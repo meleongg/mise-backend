@@ -13,7 +13,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from app.constants import GENERATIVE_MODEL
-from app.schemas.sodie_proposals import RecipeEditPatch, RecipeEditPatchDraft
+from app.schemas.sodie_proposals import RecipeEditPatch, RecipeEditPatchDraft, PreferenceTweakDraft
 from app.services.content_moderation import (
     LLM_POLICY_REJECT_MESSAGE,
     is_llm_content_policy_error,
@@ -292,4 +292,78 @@ def generate_recipe_edit_patch(
 
     if not isinstance(draft, RecipeEditPatchDraft):
         draft = RecipeEditPatchDraft.model_validate(draft)
+    return draft
+
+
+PREFERENCE_TWEAK_SYSTEM = (
+    "You classify a cook's analytics/progress follow-up about cooking preferences.\n"
+    "Output must match PreferenceTweakDraft.\n\n"
+    "Intent (pick exactly one):\n"
+    "- propose_preference — user wants to change allowlisted cooking preferences. "
+    "Fill ONLY fields that should change.\n"
+    "- coach_qa — progress/analytics/cooking Q&A with no preference write. "
+    "assistant_reply may be a short placeholder (e.g. ok).\n"
+    "- needs_more_info — preference ask is too vague. Ask a brief clarifying "
+    "question in assistant_reply.\n\n"
+    "Allowlisted fields only:\n"
+    "- max_prep_time_minutes (integer minutes)\n"
+    "- max_cook_time_minutes (integer minutes)\n"
+    "- preferred_portion_size (short string like '2-3' or 'family')\n"
+    "- recipe_repeat_preference: 'standard' or 'sooner'\n"
+    "Never invent dietary restrictions, allergens, cuisine, or skill_level.\n"
+    "Examples: feedback too hard → maybe lower max cook time; too easy → maybe "
+    "raise skill indirectly is NOT allowed — only allowlisted fields. "
+    "“Recipes feel too hard / take too long” → propose shorter max_cook_time_minutes "
+    "or max_prep_time_minutes when current values exist.\n"
+)
+
+
+def build_preference_tweak_prompt(
+    preference_snapshot: Dict[str, Any],
+    analytics_snapshot: str,
+    user_request: str,
+) -> list[BaseMessage]:
+    prefs_json = json.dumps(preference_snapshot, indent=2, default=str)
+    return [
+        SystemMessage(content=PREFERENCE_TWEAK_SYSTEM),
+        HumanMessage(
+            content=(
+                f"CURRENT PREFERENCES (JSON):\n{prefs_json}\n\n"
+                f"ANALYTICS CONTEXT:\n{analytics_snapshot}\n\n"
+                f"User message: {user_request}\n\n"
+                "Classify intent and produce the structured output."
+            )
+        ),
+    ]
+
+
+def generate_preference_tweak(
+    preference_snapshot: Dict[str, Any],
+    analytics_snapshot: str,
+    user_request: str,
+) -> PreferenceTweakDraft:
+    llm = ChatOpenAI(model=GENERATIVE_MODEL, temperature=0)
+    structured = llm.with_structured_output(PreferenceTweakDraft)
+    messages = build_preference_tweak_prompt(
+        preference_snapshot, analytics_snapshot, user_request
+    )
+    try:
+        draft = structured.invoke(messages)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        if is_llm_content_policy_error(exc):
+            logger.warning("LLM content policy error: %s", type(exc).__name__)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=LLM_POLICY_REJECT_MESSAGE,
+            ) from exc
+        logger.exception("Preference tweak generation failed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not draft that preference change right now. Try again.",
+        ) from exc
+
+    if not isinstance(draft, PreferenceTweakDraft):
+        draft = PreferenceTweakDraft.model_validate(draft)
     return draft

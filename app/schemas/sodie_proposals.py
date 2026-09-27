@@ -166,3 +166,29 @@ class ProposeRecipeEditResponse(BaseModel):
     proposal: Optional[SodieActionProposalResponse] = None
     kind: Literal["proposal", "clarify", "needs_more_info", "coach_qa"] = "proposal"
     assistant_message: Optional[str] = None
+
+
+class PreferenceTweakDraft(BaseModel):
+    """Structured LLM classification for analytics → preference tweaks."""
+
+    intent: Literal["propose_preference", "coach_qa", "needs_more_info"] = Field(
+        ...,
+        description=(
+            "propose_preference = allowlisted preference patch; "
+            "coach_qa = analytics/progress Q&A with no preference write; "
+            "needs_more_info = preference ask too vague."
+        ),
+    )
+    max_prep_time_minutes: Optional[int] = Field(None, ge=0, le=480)
+    max_cook_time_minutes: Optional[int] = Field(None, ge=0, le=480)
+    preferred_portion_size: Optional[str] = Field(None, max_length=50)
+    recipe_repeat_preference: Optional[Literal["standard", "sooner"]] = None
+    change_summary: str = Field(..., min_length=1, max_length=300)
+    assistant_reply: str = Field(..., min_length=1, max_length=500)
+
+
+class ProposePreferenceFromRequest(BaseModel):
+    request: str = Field(..., min_length=1, max_length=2000)
+    idempotency_key: str = Field(..., min_length=8, max_length=100)
+    thread_id: Optional[UUID] = None
+    pending_proposal_id: Optional[UUID] = None
