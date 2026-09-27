@@ -333,6 +333,40 @@ def test_create_proposal_from_request_uses_structured_patch(
     assert "salt" in json.dumps(fields["ingredients"]["after"]).lower()
 
 
+def test_from_request_persists_user_and_ai_on_thread(
+    client, db: Session, test_user: User, test_recipes: list, monkeypatch
+):
+    from app.schemas.sodie_proposals import IngredientLine, RecipeEditPatchDraft
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_edit_patch",
+        lambda *_a, **_k: RecipeEditPatchDraft(
+            intent="propose_edit",
+            ingredients=[IngredientLine(name="salt", measure="1 tsp")],
+            change_summary="More salt",
+            assistant_reply="Here’s a saltier proposal.",
+        ),
+    )
+    thread_id = client.post(
+        "/api/sodie/threads",
+        json={"scope": "recipe", "context_id": str(test_recipes[0].id)},
+    ).json()["id"]
+    res = client.post(
+        "/api/sodie/proposals/from-request",
+        json={
+            "source_recipe_id": str(test_recipes[0].id),
+            "request": "make it saltier",
+            "idempotency_key": "persist-user-ai-1",
+            "thread_id": thread_id,
+        },
+    )
+    assert res.status_code == 200
+    msgs = client.get(f"/api/sodie/threads/{thread_id}").json()["messages"]
+    assert [m["sender"] for m in msgs] == ["user", "ai"]
+    assert msgs[0]["content"] == "make it saltier"
+    assert "saltier" in msgs[1]["content"].lower()
+
+
 def test_create_proposal_from_request_needs_more_info(
     client, db: Session, test_recipes: list, monkeypatch
 ):
