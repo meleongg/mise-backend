@@ -204,6 +204,39 @@ class WeeklyPlan(Base):
 
     # Relationships
     user = relationship("User", back_populates="weekly_plans")
+    entries = relationship(
+        "WeeklyPlanEntry",
+        back_populates="weekly_plan",
+        cascade="all, delete-orphan",
+        order_by="WeeklyPlanEntry.position",
+    )
+
+
+class WeeklyPlanEntry(Base):
+    """Normalized plan slot with optional personal-recipe lineage (dual-writes with recipe_schedule)."""
+
+    __tablename__ = "weekly_plan_entries"
+
+    id = Column(GUID, primary_key=True, default=uuid.uuid4, index=True)
+    weekly_plan_id = Column(
+        GUID, ForeignKey("weekly_plans.id"), nullable=False, index=True
+    )
+    position = Column(Integer, nullable=False)
+    catalog_recipe_id = Column(GUID, ForeignKey("recipes.id"), nullable=True, index=True)
+    personal_recipe_id = Column(
+        GUID, ForeignKey("personal_recipes.id"), nullable=True, index=True
+    )
+    recipe_snapshot = Column(Text, nullable=False)  # JSON snapshot at bind time
+    selected_servings = Column(String(50), nullable=True)
+    lifecycle_state = Column(
+        String(20), nullable=False, default="planned"
+    )  # planned, active, completed, omitted
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    weekly_plan = relationship("WeeklyPlan", back_populates="entries")
+    catalog_recipe = relationship("Recipe")
+    personal_recipe = relationship("PersonalRecipe")
 
 
 class UserRecipeProgress(Base):

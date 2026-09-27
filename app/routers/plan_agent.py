@@ -24,6 +24,7 @@ from app.services.weekly_plan import (
     create_recipe_schedule,
     parse_recipe_schedule,
     swap_recipe_in_schedule,
+    sync_plan_entries_from_schedule,
     validate_recipe_can_be_swapped,
     replace_swapped_recipe_progress,
 )
@@ -399,6 +400,8 @@ The backend will handle inserting it into the meal plan."""
             # Increment swap count for this week
             target_plan.swap_count = current_swap_count + 1
             print(f"[SwapRecipe] Incremented swap_count to {target_plan.swap_count}")
+
+            sync_plan_entries_from_schedule(target_plan, db)
 
             db.commit()
             db.refresh(target_plan)
