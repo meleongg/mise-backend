@@ -131,7 +131,12 @@ class SodieThread(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     user = relationship("User", back_populates="sodie_threads")
-    messages = relationship("SodieMessage", back_populates="thread", cascade="all, delete-orphan")
+    messages = relationship(
+        "SodieMessage",
+        back_populates="thread",
+        cascade="all, delete-orphan",
+        order_by="SodieMessage.created_at",
+    )
 
 
 class SodieMessage(Base):

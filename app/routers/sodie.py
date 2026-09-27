@@ -66,13 +66,25 @@ def _proposal_response(proposal) -> SodieActionProposalResponse:
 
 
 @router.get("/threads", response_model=List[SodieThreadResponse])
-def list_threads(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return (
+def list_threads(
+    scope: Optional[str] = None,
+    context_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    query = (
         db.query(SodieThread)
-        .filter(SodieThread.user_id == current_user.id, SodieThread.is_temporary.is_(False))
-        .order_by(SodieThread.updated_at.desc())
-        .all()
+        .options(joinedload(SodieThread.messages))
+        .filter(
+            SodieThread.user_id == current_user.id,
+            SodieThread.is_temporary.is_(False),
+        )
     )
+    if scope is not None:
+        query = query.filter(SodieThread.scope == scope)
+    if context_id is not None:
+        query = query.filter(SodieThread.context_id == context_id)
+    return query.order_by(SodieThread.updated_at.desc()).all()
 
 
 @router.post("/threads", response_model=SodieThreadResponse)
@@ -193,6 +205,34 @@ def create_proposal(
     )
 
 
+def _append_thread_turn(
+    db: Session,
+    thread: SodieThread,
+    *,
+    user_content: Optional[str] = None,
+    ai_content: Optional[str] = None,
+) -> None:
+    """Persist a user/ai turn so history resume shows both sides."""
+    if user_content and user_content.strip():
+        db.add(
+            SodieMessage(
+                thread_id=thread.id,
+                sender="user",
+                content=user_content.strip(),
+            )
+        )
+    if ai_content and ai_content.strip():
+        db.add(
+            SodieMessage(
+                thread_id=thread.id,
+                sender="ai",
+                content=ai_content.strip(),
+            )
+        )
+    thread.updated_at = datetime.now(timezone.utc)
+    db.commit()
+
+
 @router.post("/proposals/from-request", response_model=ProposeRecipeEditResponse)
 def create_proposal_from_request(
     payload: ProposeRecipeEditFromRequest,
@@ -200,8 +240,9 @@ def create_proposal_from_request(
     current_user: User = Depends(get_current_user),
 ):
     """Classify NL follow-up via structured LLM, then propose / clarify / ask for more."""
+    thread: Optional[SodieThread] = None
     if payload.thread_id:
-        _thread(db, payload.thread_id, current_user.id)
+        thread = _thread(db, payload.thread_id, current_user.id)
 
     recipe = db.query(Recipe).filter(Recipe.id == payload.source_recipe_id).first()
     if not recipe:
@@ -223,43 +264,39 @@ def create_proposal_from_request(
     draft = generate_recipe_edit_patch(
         snapshot, payload.request, pending_diff=pending_diff
     )
+    user_text = payload.request.strip()
 
     if draft.intent == "clarify":
         if not pending_proposal:
+            assistant = draft.assistant_reply or (
+                "Tell me the change you want and I’ll draft a proposal."
+            )
+            if thread:
+                _append_thread_turn(
+                    db, thread, user_content=user_text, ai_content=assistant
+                )
             return ProposeRecipeEditResponse(
                 kind="needs_more_info",
-                assistant_message=draft.assistant_reply
-                or "Tell me the change you want and I’ll draft a proposal.",
+                assistant_message=assistant,
             )
         thread_id = pending_proposal.thread_id or payload.thread_id
+        assistant = draft.assistant_reply or ""
         if thread_id:
-            thread = _thread(db, thread_id, current_user.id)
-            db.add(
-                SodieMessage(
-                    thread_id=thread.id,
-                    sender="ai",
-                    content=draft.assistant_reply,
-                )
+            turn_thread = thread or _thread(db, thread_id, current_user.id)
+            _append_thread_turn(
+                db, turn_thread, user_content=user_text, ai_content=assistant
             )
-            thread.updated_at = datetime.now(timezone.utc)
-            db.commit()
         return ProposeRecipeEditResponse(
             kind="clarify",
             assistant_message=draft.assistant_reply,
         )
 
     if draft.intent == "needs_more_info":
-        if payload.thread_id:
-            thread = _thread(db, payload.thread_id, current_user.id)
-            db.add(
-                SodieMessage(
-                    thread_id=thread.id,
-                    sender="ai",
-                    content=draft.assistant_reply,
-                )
+        assistant = draft.assistant_reply or ""
+        if thread:
+            _append_thread_turn(
+                db, thread, user_content=user_text, ai_content=assistant
             )
-            thread.updated_at = datetime.now(timezone.utc)
-            db.commit()
         return ProposeRecipeEditResponse(
             kind="needs_more_info",
             assistant_message=draft.assistant_reply,
@@ -268,10 +305,16 @@ def create_proposal_from_request(
     # propose_edit
     patch = draft_to_recipe_edit_patch(draft, recipe_snapshot=snapshot)
     if not patch.model_dump(exclude_none=True):
+        assistant = draft.assistant_reply or (
+            "Tell me the change you want and I’ll draft a proposal."
+        )
+        if thread:
+            _append_thread_turn(
+                db, thread, user_content=user_text, ai_content=assistant
+            )
         return ProposeRecipeEditResponse(
             kind="needs_more_info",
-            assistant_message=draft.assistant_reply
-            or "Tell me the change you want and I’ll draft a proposal.",
+            assistant_message=assistant,
         )
 
     if pending_proposal:
@@ -287,12 +330,10 @@ def create_proposal_from_request(
         thread_id=payload.thread_id,
     )
     assistant = draft.assistant_reply or "Here’s a proposal from what you asked for."
-    if payload.thread_id:
-        thread = _thread(db, payload.thread_id, current_user.id)
-        message = SodieMessage(thread_id=thread.id, sender="ai", content=assistant)
-        thread.updated_at = datetime.now(timezone.utc)
-        db.add(message)
-        db.commit()
+    if thread:
+        _append_thread_turn(
+            db, thread, user_content=user_text, ai_content=assistant
+        )
     return ProposeRecipeEditResponse(
         kind="proposal",
         proposal=_proposal_response(proposal),
