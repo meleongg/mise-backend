@@ -6,6 +6,7 @@ from sqlalchemy import (
     Text,
     ForeignKey,
     Boolean,
+    Float,
     TypeDecorator,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, TEXT
@@ -106,6 +107,9 @@ class User(Base):
     )
     sodie_action_proposals = relationship(
         "SodieActionProposal", back_populates="user", cascade="all, delete-orphan"
+    )
+    shopping_lists = relationship(
+        "ShoppingList", back_populates="user", cascade="all, delete-orphan"
     )
 
 
@@ -346,3 +350,78 @@ class SodieActionProposal(Base):
     thread = relationship("SodieThread")
     source_recipe = relationship("Recipe")
     personal_recipe = relationship("PersonalRecipe")
+
+
+class ShoppingList(Base):
+    __tablename__ = "shopping_lists"
+
+    id = Column(GUID, primary_key=True, default=uuid.uuid4, index=True)
+    user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
+    weekly_plan_id = Column(
+        GUID, ForeignKey("weekly_plans.id"), nullable=True, index=True
+    )
+    title = Column(String(200), nullable=False)
+    status = Column(String(20), nullable=False, default="active")  # active, archived
+    retailer_snapshot = Column(String(100), nullable=True)
+    location_snapshot = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    archived_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", back_populates="shopping_lists")
+    weekly_plan = relationship("WeeklyPlan")
+    items = relationship(
+        "ShoppingListItem",
+        back_populates="shopping_list",
+        cascade="all, delete-orphan",
+        order_by="ShoppingListItem.sort_order",
+    )
+
+
+class ShoppingListItem(Base):
+    __tablename__ = "shopping_list_items"
+
+    id = Column(GUID, primary_key=True, default=uuid.uuid4, index=True)
+    shopping_list_id = Column(
+        GUID, ForeignKey("shopping_lists.id"), nullable=False, index=True
+    )
+    normalized_name = Column(String(200), nullable=False)
+    display_text = Column(String(300), nullable=False)
+    quantity = Column(Float, nullable=True)
+    unit = Column(String(50), nullable=True)
+    aisle = Column(String(80), nullable=True)
+    is_checked = Column(Boolean, nullable=False, default=False)
+    is_user_edit = Column(Boolean, nullable=False, default=False)
+    needs_review = Column(Boolean, nullable=False, default=False)
+    confidence = Column(String(20), nullable=True)  # high, medium, low
+    reason = Column(Text, nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    shopping_list = relationship("ShoppingList", back_populates="items")
+    sources = relationship(
+        "ShoppingListItemSource",
+        back_populates="shopping_list_item",
+        cascade="all, delete-orphan",
+    )
+
+
+class ShoppingListItemSource(Base):
+    __tablename__ = "shopping_list_item_sources"
+
+    id = Column(GUID, primary_key=True, default=uuid.uuid4, index=True)
+    shopping_list_item_id = Column(
+        GUID, ForeignKey("shopping_list_items.id"), nullable=False, index=True
+    )
+    weekly_plan_entry_id = Column(
+        GUID, ForeignKey("weekly_plan_entries.id"), nullable=False, index=True
+    )
+    source_amount = Column(String(100), nullable=True)
+    inclusion_state = Column(
+        String(20), nullable=False, default="included"
+    )  # included, omitted
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    shopping_list_item = relationship("ShoppingListItem", back_populates="sources")
+    weekly_plan_entry = relationship("WeeklyPlanEntry")

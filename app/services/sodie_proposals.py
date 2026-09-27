@@ -117,7 +117,7 @@ def build_impact_preview(
             "Personal copy servings update on approve; catalog recipe unchanged"
         ),
         "plan_schedule": "unchanged until weekly_plan_entries",
-        "shopping_list": "unchanged until weekly_plan_entries",
+        "shopping_list": "unchanged until shopping reconciliation",
         "list_reconciliation_queued": False,
         "allergen_conflict": bool(allergen_conflict),
         "diet_conflict": bool(diet_conflict),
