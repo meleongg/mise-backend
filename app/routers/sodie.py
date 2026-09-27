@@ -23,6 +23,7 @@ from app.schemas.sodie_proposals import (
 )
 from app.utils.auth import get_current_user
 from app.constants import GENERATIVE_MODEL
+from app.services.content_moderation import ensure_user_text_allowed
 from app.services.sodie_chat_context import build_sodie_prompt_context
 from app.services.sodie_llm import (
     build_coach_prompt,
@@ -37,6 +38,7 @@ router = APIRouter()
 
 
 def _coach_response(user: User, thread: SodieThread, content: str, db: Session) -> str:
+    ensure_user_text_allowed(content)
     context = build_sodie_prompt_context(
         db,
         user,

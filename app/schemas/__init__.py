@@ -382,11 +382,6 @@ class GeneralChatInput(BaseModel):
     week_number: Optional[int] = None
 
 
-class AdaptiveChatResponse(BaseModel):
-    response: str
-    intent: str
-
-
 class SwapRecipeRequest(BaseModel):
     recipe_id_to_replace: UUID
     week_number: Optional[int] = Field(
