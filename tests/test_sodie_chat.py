@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 import uuid
 
 from fastapi import HTTPException
@@ -132,10 +132,22 @@ def test_personal_recipe_snapshot_is_owner_only(db, test_user, test_recipes):
         assert exc.status_code == 404
 
 
-@patch("app.routers.plan_agent.ensure_user_text_allowed")
-@patch("app.routers.plan_agent.ChatOpenAI")
-def test_adaptive_chat_includes_context_in_prompt(
-    mock_chat_openai,
+def test_coach_prompt_analytics_mode_rules():
+    from app.services.sodie_llm import build_coach_prompt
+
+    prompt = build_coach_prompt(
+        "How am I doing this week?",
+        "ACTIVE_PLAN: week 1\n- Week progress: 0/1 recipes completed",
+        mode="analytics",
+    )
+    assert "Mode: analytics" in prompt
+    assert "0/1" in prompt
+
+
+@patch("app.routers.sodie.ensure_user_text_allowed")
+@patch("app.routers.sodie.invoke_chat_model")
+def test_sodie_chat_includes_context_in_prompt(
+    mock_invoke,
     mock_moderation,
     client,
     test_user,
@@ -143,64 +155,25 @@ def test_adaptive_chat_includes_context_in_prompt(
     test_recipe_progress,
 ):
     mock_moderation.return_value = None
-    mock_llm = MagicMock()
-    mock_response = MagicMock()
-    mock_response.content = "Try the pasta first."
-    mock_llm.invoke.return_value = mock_response
-    mock_chat_openai.return_value = mock_llm
+    mock_invoke.return_value = "Try the pasta first."
 
-    with patch(
-        "app.routers.plan_agent.classify_message_intent",
-        return_value="general_knowledge",
-    ):
-        response = client.post(
-            f"/plan/adaptive_chat/{test_user.id}",
-            json={
-                "user_message": "What should I cook first?",
-                "week_number": 1,
-            },
-        )
+    thread = client.post(
+        "/api/sodie/threads",
+        json={"scope": "plan", "context_id": str(test_plan.week_number)},
+    )
+    assert thread.status_code == 200
+    thread_id = thread.json()["id"]
+
+    response = client.post(
+        f"/api/sodie/threads/{thread_id}/chat",
+        json={"content": "What should I cook first?"},
+    )
 
     assert response.status_code == 200
-    assert response.json()["response"] == "Try the pasta first."
+    assert response.json()["ai_message"]["content"] == "Try the pasta first."
 
-    prompt = mock_llm.invoke.call_args[0][0]
+    prompt = mock_invoke.call_args[0][1]
     assert "Test Recipe 0" in prompt
     assert "Italian" in prompt
     assert "ACTIVE_PLAN: week 1" in prompt
-
-
-@patch("app.routers.plan_agent.ensure_user_text_allowed")
-@patch("app.routers.plan_agent.ChatOpenAI")
-def test_adaptive_chat_analytics_mode(
-    mock_chat_openai,
-    mock_moderation,
-    client,
-    test_user,
-    test_plan,
-    test_recipe_progress,
-):
-    mock_moderation.return_value = None
-    mock_llm = MagicMock()
-    mock_response = MagicMock()
-    mock_response.content = "You have 0 of 1 recipes completed."
-    mock_llm.invoke.return_value = mock_response
-    mock_chat_openai.return_value = mock_llm
-
-    with patch(
-        "app.routers.plan_agent.classify_message_intent",
-        return_value="analytics",
-    ):
-        response = client.post(
-            f"/plan/adaptive_chat/{test_user.id}",
-            json={
-                "user_message": "How am I doing this week?",
-                "week_number": 1,
-            },
-        )
-
-    assert response.status_code == 200
-    assert response.json()["intent"] == "analytics"
-    prompt = mock_llm.invoke.call_args[0][0]
-    assert "Mode: analytics" in prompt
-    assert "0/1" in prompt
+    assert "ACTIVE PAGE: plan" in prompt

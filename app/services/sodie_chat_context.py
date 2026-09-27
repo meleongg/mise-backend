@@ -1,5 +1,5 @@
 """
-Build compact context strings for Sodie coach chat (adaptive_chat / general).
+Build compact context strings for Sodie coach chat.
 """
 
 from __future__ import annotations

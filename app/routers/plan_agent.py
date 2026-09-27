@@ -32,12 +32,10 @@ from app.schemas import (
     WeeklyPlanResponse,
     PlanGenerationInput,
     GeneralChatInput,
-    AdaptiveChatResponse,
     SwapRecipeRequest,
     SwapRecipeResponse,
     RecipeResponse,
 )
-from app.services.intent_classifier import classify_message_intent
 from app.services.sodie_chat_context import build_sodie_chat_context
 from app.utils.uuid_helpers import uuids_to_strs, strs_to_uuids
 from app.utils.prompt_helpers import get_goal_description, get_skill_description
@@ -105,61 +103,6 @@ async def casual_chat_endpoint(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Error communicating with the general knowledge AI.",
-        )
-
-
-@router.post("/adaptive_chat/{user_id}", response_model=AdaptiveChatResponse)
-@limiter.limit(CHAT_RATE_LIMIT)
-@limiter.limit(CHAT_RATE_LIMIT, key_func=get_user_id_rate_limit_key)
-async def adaptive_chat_endpoint(
-    request: Request,
-    user_id: uuid.UUID,
-    chat_input: GeneralChatInput = Body(...),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Adaptive chat endpoint that classifies intent and routes accordingly.
-
-    Routes:
-    - general_knowledge → Context-aware coach Q&A
-    - analytics → Progress/stats from user context
-
-    Note: Recipe modifications are handled via dedicated /swap-recipe endpoint.
-
-    Returns:
-        AdaptiveChatResponse with response text and intent
-    """
-    require_same_user(current_user, user_id)
-    try:
-        ensure_user_text_allowed(chat_input.user_message)
-        context = build_sodie_chat_context(db, current_user, chat_input.week_number)
-
-        logger.info(
-            "AdaptiveChat classify user_id=%s week=%s msg_len=%s",
-            user_id,
-            chat_input.week_number,
-            len(chat_input.user_message),
-        )
-        intent = classify_message_intent(chat_input.user_message)
-        logger.info("AdaptiveChat intent=%s user_id=%s", intent, user_id)
-
-        mode = "analytics" if intent == "analytics" else "general_knowledge"
-        response_content = _get_sodie_coach_response(
-            chat_input.user_message, context, mode=mode
-        )
-        return AdaptiveChatResponse(
-            response=response_content,
-            intent=intent if intent == "analytics" else "general_knowledge",
-        )
-
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("AdaptiveChat failed user_id=%s", user_id)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Error processing chat message.",
         )
 
 
