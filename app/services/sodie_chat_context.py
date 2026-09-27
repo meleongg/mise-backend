@@ -12,9 +12,21 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.constants import MAX_SWAPS_PER_WEEK
-from app.models import Recipe, User, UserRecipeProgress, WeeklyPlan
+from app.models import PersonalRecipe, Recipe, User, UserRecipeProgress, WeeklyPlan
 from app.services.weekly_plan import WeeklyPlanService, parse_recipe_schedule
 from app.utils.prompt_helpers import get_goal_description, get_skill_description
+
+SUPPORTED_SODIE_SCOPES = frozenset(
+    {
+        "global",
+        "plan",
+        "recipe",
+        "kitchen",
+        "shopping",
+        "personal_recipe",
+        "settings",
+    }
+)
 
 
 def _parse_json_list(value: Optional[str]) -> List[str]:
@@ -120,13 +132,24 @@ def authorize_page_context(
     Never trust client-supplied recipe/plan content — only load from DB.
     """
     scope = (scope or "global").strip().lower()
-    if scope not in {"global", "plan", "recipe", "kitchen", "shopping"}:
+    if scope not in SUPPORTED_SODIE_SCOPES:
         raise HTTPException(status_code=422, detail=f"Unsupported Sodie scope: {scope}")
 
     if scope == "global":
         return (
             "ACTIVE PAGE: global\n"
             "- No page-specific recipe or plan entity is selected.\n",
+            None,
+        )
+
+    if scope == "settings":
+        # Privacy: no cooking profile / plan dump — UI help only.
+        return (
+            "ACTIVE PAGE: settings\n"
+            "- User is on Preferences or Account settings.\n"
+            "- Answer only about Mise settings UI (preferences, account, "
+            "privacy toggles). Do not invent pantry/plan/recipe details and "
+            "do not assume cooking goals from memory.\n",
             None,
         )
 
@@ -137,6 +160,42 @@ def authorize_page_context(
             "prep/shopping advice without inventing list items.\n",
             None,
         )
+
+    if scope == "personal_recipe":
+        personal_id = _parse_uuid(context_id)
+        if not personal_id:
+            return (
+                "ACTIVE PAGE: personal_recipe\n"
+                "- User is browsing My Recipes (no specific personal copy selected).\n"
+                "- Help them find or talk about their edited recipes; do not "
+                "invent personal-recipe content.\n",
+                None,
+            )
+        personal = (
+            db.query(PersonalRecipe)
+            .filter(
+                PersonalRecipe.id == personal_id,
+                PersonalRecipe.user_id == user.id,
+                PersonalRecipe.is_active.is_(True),
+            )
+            .first()
+        )
+        if not personal:
+            raise HTTPException(status_code=404, detail="Personal recipe not found")
+        lines = [
+            "ACTIVE PAGE: personal_recipe",
+            f"- Personal recipe id: {personal.id}",
+            f"- Title: {personal.name}",
+            f"- Revision: {personal.current_revision}",
+            f"- Servings: {personal.portion_size or 'not set'}",
+            f"- Source catalog recipe id: {personal.source_recipe_id or 'none'}",
+            f"- Ingredients: {_format_ingredients(personal.ingredients)}",
+            f"- Instructions: {_format_instructions(personal.instructions)}",
+            f"- Notes: {_truncate(personal.notes or 'none', 400)}",
+            "- This is the user’s owned My Recipes copy (not the shared catalog). "
+            "Prefer edit/coach guidance for this personal version.",
+        ]
+        return "\n".join(lines) + "\n", None
 
     if scope == "plan":
         plan: Optional[WeeklyPlan] = None
@@ -335,5 +394,8 @@ def build_sodie_prompt_context(
 ) -> str:
     """Profile/plan context plus authorized page snapshot for coach prompts."""
     page_block, week_number = authorize_page_context(db, user, scope, context_id)
+    # Settings must not inject durable cooking/plan/profile snapshots.
+    if (scope or "").strip().lower() == "settings":
+        return page_block
     profile = build_sodie_chat_context(db, user, week_number=week_number)
     return f"{profile}\n\n{page_block}"
