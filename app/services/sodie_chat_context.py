@@ -267,7 +267,8 @@ def authorize_page_context(
             f"- Instructions: {_format_instructions(personal.instructions)}",
             f"- Notes: {_truncate(personal.notes or 'none', 400)}",
             "- This is the user’s owned My Recipes copy (not the shared catalog). "
-            "Prefer edit/coach guidance for this personal version.",
+            "Prefer technique help for this personal version. For content edits, "
+            "tell them to use Edit with Sodie — coach chat cannot submit proposals.",
         ]
         return "\n".join(lines) + "\n", None
 
@@ -348,12 +349,16 @@ def authorize_page_context(
     if mode == "kitchen":
         lines.append(
             "- User is in Kitchen Mode (step-by-step cooking). Prefer concise "
-            "timing/technique help for this recipe."
+            "timing/technique help for this recipe. For ingredient/step changes, "
+            "tell them to use Edit with Sodie — coach chat cannot submit proposals."
         )
     else:
         lines.append(
-            "- User is viewing this catalog recipe page. Prefer prep, technique, "
-            "and edit guidance for this dish (Swap is a separate plan-slot control)."
+            "- User is viewing this catalog recipe page. Prefer prep and technique "
+            "help. If they ask to change ingredients, steps, servings, or notes, "
+            "tell them to tap Edit with Sodie for a reviewable before/after "
+            "proposal — never invent a verbal proposal or ask to “submit” one. "
+            "Swap is a separate plan-slot control."
         )
     return "\n".join(lines) + "\n", None
 

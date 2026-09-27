@@ -367,6 +367,57 @@ def test_from_request_persists_user_and_ai_on_thread(
     assert "saltier" in msgs[1]["content"].lower()
 
 
+def test_list_thread_proposals_for_resume(
+    client, test_user: User, test_recipes: list, monkeypatch
+):
+    from app.schemas.sodie_proposals import IngredientLine, RecipeEditPatchDraft
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_edit_patch",
+        lambda *_a, **_k: RecipeEditPatchDraft(
+            intent="propose_edit",
+            ingredients=[IngredientLine(name="garlic", measure="2 cloves")],
+            change_summary="More garlic",
+            assistant_reply="Here’s a garlic proposal.",
+        ),
+    )
+    thread_id = client.post(
+        "/api/sodie/threads",
+        json={"scope": "recipe", "context_id": str(test_recipes[0].id)},
+    ).json()["id"]
+    created = client.post(
+        "/api/sodie/proposals/from-request",
+        json={
+            "source_recipe_id": str(test_recipes[0].id),
+            "request": "add garlic",
+            "idempotency_key": "list-resume-1",
+            "thread_id": thread_id,
+        },
+    )
+    assert created.status_code == 200
+    proposal_id = created.json()["proposal"]["id"]
+
+    listed = client.get(f"/api/sodie/threads/{thread_id}/proposals")
+    assert listed.status_code == 200
+    assert len(listed.json()) == 1
+    assert listed.json()[0]["id"] == proposal_id
+    assert listed.json()[0]["status"] == "pending"
+
+    pending_only = client.get(
+        f"/api/sodie/threads/{thread_id}/proposals",
+        params={"status": "pending"},
+    )
+    assert pending_only.status_code == 200
+    assert len(pending_only.json()) == 1
+
+    other_thread = client.post("/api/sodie/threads", json={"scope": "global"}).json()[
+        "id"
+    ]
+    empty = client.get(f"/api/sodie/threads/{other_thread}/proposals")
+    assert empty.status_code == 200
+    assert empty.json() == []
+
+
 def test_create_proposal_from_request_needs_more_info(
     client, db: Session, test_recipes: list, monkeypatch
 ):
@@ -393,6 +444,33 @@ def test_create_proposal_from_request_needs_more_info(
     assert body["kind"] == "needs_more_info"
     assert body["proposal"] is None
     assert "sugar" in body["assistant_message"].lower() or "change" in body["assistant_message"].lower()
+
+
+def test_create_proposal_from_request_coach_qa_falls_through(
+    client, test_recipes: list, monkeypatch
+):
+    from app.schemas.sodie_proposals import RecipeEditPatchDraft
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_edit_patch",
+        lambda *_a, **_k: RecipeEditPatchDraft(
+            intent="coach_qa",
+            change_summary="Technique question.",
+            assistant_reply="ok",
+        ),
+    )
+    res = client.post(
+        "/api/sodie/proposals/from-request",
+        json={
+            "source_recipe_id": str(test_recipes[0].id),
+            "request": "How long does this bake?",
+            "idempotency_key": "from-request-coach-qa-1",
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["kind"] == "coach_qa"
+    assert body["proposal"] is None
 
 
 def test_create_proposal_from_request_clarify_keeps_pending(

@@ -144,6 +144,21 @@ def test_coach_prompt_analytics_mode_rules():
     assert "0/1" in prompt
 
 
+def test_coach_rules_redirect_edits_to_edit_with_sodie():
+    from app.services.sodie_llm import SODIE_BASE_RULES, build_coach_prompt
+
+    rules = SODIE_BASE_RULES.lower()
+    assert "edit with sodie" in rules
+    assert "cannot create or submit" in rules
+    assert "verbal proposal" in rules
+    prompt = build_coach_prompt(
+        "Can you add more salt?",
+        "ACTIVE PAGE: recipe\n- Title: Cookies\n",
+        mode="general_knowledge",
+    )
+    assert "Edit with Sodie" in prompt
+
+
 def test_analytics_scope_snapshot_uses_progress(
     db, test_user, test_plan, test_recipe_progress
 ):
