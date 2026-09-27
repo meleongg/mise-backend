@@ -289,14 +289,51 @@ def create_proposal_from_request(
         pending_diff = proposals.serialize_proposal(pending_proposal).get("diff")
 
     snapshot = proposals.recipe_content_snapshot(recipe)
+    user_profile = {
+        "allergens": proposals.parse_json_list(getattr(current_user, "allergens", None)),
+        "dietary_restrictions": proposals.parse_json_list(
+            getattr(current_user, "dietary_restrictions", None)
+        ),
+    }
     draft = generate_recipe_edit_patch(
-        snapshot, payload.request, pending_diff=pending_diff
+        snapshot,
+        payload.request,
+        pending_diff=pending_diff,
+        user_profile=user_profile,
     )
     user_text = payload.request.strip()
 
     if draft.intent == "coach_qa":
         # FE falls through to coach chat; do not persist a stub reply here.
         return ProposeRecipeEditResponse(kind="coach_qa", assistant_message=None)
+
+    if draft.intent == "suggest_swap":
+        assistant = draft.assistant_reply or (
+            "This sounds like a different dish — use Swap on the plan or recipe "
+            "card instead of editing this recipe."
+        )
+        if thread:
+            _append_thread_turn(
+                db, thread, user_content=user_text, ai_content=assistant
+            )
+        return ProposeRecipeEditResponse(
+            kind="suggest_swap",
+            assistant_message=assistant,
+        )
+
+    if draft.intent == "out_of_scope":
+        assistant = draft.assistant_reply or (
+            "That sits outside a recipe edit — try Weekly Plan, Shopping, or "
+            "Settings instead of patching this dish."
+        )
+        if thread:
+            _append_thread_turn(
+                db, thread, user_content=user_text, ai_content=assistant
+            )
+        return ProposeRecipeEditResponse(
+            kind="out_of_scope",
+            assistant_message=assistant,
+        )
 
     if draft.intent == "clarify":
         if not pending_proposal:
@@ -323,15 +360,22 @@ def create_proposal_from_request(
             assistant_message=draft.assistant_reply,
         )
 
-    if draft.intent == "needs_more_info":
-        assistant = draft.assistant_reply or ""
+    if draft.intent == "needs_more_info" or (
+        draft.intent == "propose_edit"
+        and (draft.amount_ambiguous or draft.confidence == "low")
+    ):
+        assistant = draft.assistant_reply or (
+            "What exact change should I make — and any amounts you want?"
+            if draft.amount_ambiguous or draft.confidence == "low"
+            else ""
+        )
         if thread:
             _append_thread_turn(
                 db, thread, user_content=user_text, ai_content=assistant
             )
         return ProposeRecipeEditResponse(
             kind="needs_more_info",
-            assistant_message=draft.assistant_reply,
+            assistant_message=assistant or draft.assistant_reply,
         )
 
     # propose_edit
@@ -360,6 +404,10 @@ def create_proposal_from_request(
         idempotency_key=payload.idempotency_key,
         rationale=draft.change_summary or payload.request,
         thread_id=payload.thread_id,
+        allergen_conflict=bool(draft.allergen_conflict),
+        diet_conflict=bool(draft.diet_conflict),
+        safety_notes=draft.safety_notes,
+        confidence=draft.confidence,
     )
     assistant = draft.assistant_reply or "Here’s a proposal from what you asked for."
     if thread:
