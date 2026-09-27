@@ -25,6 +25,7 @@ SUPPORTED_SODIE_SCOPES = frozenset(
         "shopping",
         "personal_recipe",
         "settings",
+        "analytics",
     }
 )
 
@@ -123,6 +124,76 @@ def _parse_uuid(value: Optional[str]) -> Optional[uuid.UUID]:
         return None
 
 
+def _analytics_page_snapshot(db: Session, user: User) -> str:
+    """Trusted progress aggregates for /analytics — never invent stats."""
+    plan_service = WeeklyPlanService()
+    summary = plan_service.get_progress_summary(user.id, db)
+    plans = (
+        db.query(WeeklyPlan)
+        .filter(WeeklyPlan.user_id == user.id)
+        .order_by(WeeklyPlan.week_number.desc())
+        .all()
+    )
+    progress_rows = (
+        db.query(UserRecipeProgress)
+        .filter(UserRecipeProgress.user_id == user.id)
+        .all()
+    )
+    feedback_counts = {"too_easy": 0, "just_right": 0, "too_hard": 0}
+    for row in progress_rows:
+        fb = getattr(row, "feedback", None)
+        if fb in feedback_counts:
+            feedback_counts[fb] += 1
+
+    completed = [
+        p for p in progress_rows if getattr(p, "status", None) == "completed"
+    ]
+    # Lightweight cuisine counts from completed recipes (catalog join).
+    cuisine_counts: Dict[str, int] = {}
+    recipe_ids = [p.recipe_id for p in completed if getattr(p, "recipe_id", None)]
+    if recipe_ids:
+        recipes = db.query(Recipe).filter(Recipe.id.in_(recipe_ids)).all()
+        by_id = {r.id: r for r in recipes}
+        for pid in recipe_ids:
+            recipe = by_id.get(pid)
+            if not recipe:
+                continue
+            cuisine = getattr(recipe, "cuisine", None) or "unknown"
+            cuisine_counts[cuisine] = cuisine_counts.get(cuisine, 0) + 1
+    top_cuisines = sorted(cuisine_counts.items(), key=lambda x: (-x[1], x[0]))[:5]
+    cuisine_line = (
+        ", ".join(f"{name}×{count}" for name, count in top_cuisines)
+        if top_cuisines
+        else "none yet"
+    )
+
+    total_recipes = int(summary.get("total_recipes") or 0)
+    completed_recipes = int(summary.get("completed_recipes") or 0)
+    rate = float(summary.get("completion_rate") or 0.0)
+    lines = [
+        "ACTIVE PAGE: analytics",
+        "- User is viewing their Cooking Journey analytics.",
+        f"- Total weekly plans: {len(plans)}",
+        f"- Current week number: {summary.get('current_week') or 'none'}",
+        f"- Recipes tracked: {total_recipes}",
+        f"- Recipes completed: {completed_recipes}",
+        f"- Completion rate: {rate:.0%} ({completed_recipes}/{total_recipes or 0})",
+        f"- Skill progression signal: {summary.get('skill_progression') or 'unknown'}",
+        (
+            "- Feedback counts (completed with feedback): "
+            f"too_easy={feedback_counts['too_easy']}, "
+            f"just_right={feedback_counts['just_right']}, "
+            f"too_hard={feedback_counts['too_hard']}"
+        ),
+        f"- Top cuisines among completed recipes: {cuisine_line}",
+        "- Answer using ONLY these aggregates and the USER PROFILE / ACTIVE_PLAN "
+        "blocks when present. Do not invent weeks, rates, or recipes. Prefer "
+        "plain-language pattern insights (streaks/fit/trends). Recipe or "
+        "preference change suggestions must stay conversational — no silent writes.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def authorize_page_context(
     db: Session, user: User, scope: str, context_id: Optional[str]
 ) -> Tuple[str, Optional[int]]:
@@ -152,6 +223,9 @@ def authorize_page_context(
             "do not assume cooking goals from memory.\n",
             None,
         )
+
+    if scope == "analytics":
+        return _analytics_page_snapshot(db, user), None
 
     if scope == "shopping":
         return (

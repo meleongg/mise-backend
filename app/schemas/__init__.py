@@ -142,9 +142,10 @@ class SodieThreadCreate(BaseModel):
         "shopping",
         "personal_recipe",
         "settings",
+        "analytics",
     ] = "global"
     # Entity id for the page: catalog/personal recipe UUID, weekly_plan UUID,
-    # or week number as digits. Unused for settings.
+    # or week number as digits. Unused for settings/analytics.
     context_id: Optional[str] = Field(None, max_length=36)
     is_temporary: bool = False
 
