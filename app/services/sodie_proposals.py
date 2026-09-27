@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -18,6 +18,7 @@ from app.models import (
     SodieActionProposal,
     SodieThread,
     User,
+    UserRecipeProgress,
 )
 from app.schemas.sodie_proposals import RecipeEditPatch
 
@@ -448,10 +449,182 @@ def apply_preference_tweak(
     return proposal
 
 
+def list_recipe_pick_candidates(
+    db: Session, user: User, *, limit: int = 12
+) -> List[Dict[str, Any]]:
+    """Server-built catalog shortlist for Tips recipe suggestions."""
+    completed_ids = {
+        row.recipe_id
+        for row in db.query(UserRecipeProgress.recipe_id)
+        .filter(
+            UserRecipeProgress.user_id == user.id,
+            UserRecipeProgress.status == "completed",
+        )
+        .all()
+        if row.recipe_id is not None
+    }
+
+    preferred_cuisine = (user.cuisine or "").strip()
+    recipes: List[Recipe] = []
+    if preferred_cuisine:
+        matching = (
+            db.query(Recipe)
+            .filter(Recipe.cuisine.ilike(preferred_cuisine))
+            .limit(limit)
+            .all()
+        )
+        if len(matching) < limit:
+            extras = (
+                db.query(Recipe)
+                .filter(~Recipe.cuisine.ilike(preferred_cuisine))
+                .limit(limit - len(matching))
+                .all()
+            )
+            matching = matching + extras
+        recipes = matching
+    else:
+        recipes = db.query(Recipe).limit(limit).all()
+
+    not_done = [r for r in recipes if r.id not in completed_ids]
+    if len(not_done) >= min(4, limit):
+        recipes = not_done[:limit]
+
+    max_cook = getattr(user, "max_cook_time_minutes", None)
+    max_prep = getattr(user, "max_prep_time_minutes", None)
+    filtered: List[Recipe] = []
+    for recipe in recipes:
+        if max_cook is not None and recipe.cook_time_minutes is not None:
+            if recipe.cook_time_minutes > max_cook:
+                continue
+        if max_prep is not None and recipe.prep_time_minutes is not None:
+            if recipe.prep_time_minutes > max_prep:
+                continue
+        filtered.append(recipe)
+    if filtered:
+        recipes = filtered[:limit]
+
+    return [
+        {
+            "id": str(recipe.id),
+            "name": recipe.name,
+            "cuisine": recipe.cuisine,
+            "difficulty": recipe.difficulty,
+            "prep_time_minutes": recipe.prep_time_minutes,
+            "cook_time_minutes": recipe.cook_time_minutes,
+        }
+        for recipe in recipes[:limit]
+    ]
+
+
+def propose_recipe_pick(
+    db: Session,
+    user: User,
+    *,
+    recipe_id: UUID,
+    idempotency_key: str,
+    rationale: Optional[str] = None,
+    thread_id: Optional[UUID] = None,
+) -> SodieActionProposal:
+    existing = (
+        db.query(SodieActionProposal)
+        .filter(
+            SodieActionProposal.user_id == user.id,
+            SodieActionProposal.idempotency_key == idempotency_key,
+        )
+        .first()
+    )
+    if existing:
+        return existing
+
+    recipe = db.query(Recipe).filter(Recipe.id == recipe_id).first()
+    if not recipe:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+
+    after = {
+        "id": str(recipe.id),
+        "name": recipe.name,
+        "cuisine": recipe.cuisine,
+        "difficulty": recipe.difficulty,
+        "prep_time_minutes": recipe.prep_time_minutes,
+        "cook_time_minutes": recipe.cook_time_minutes,
+    }
+    proposal = SodieActionProposal(
+        user_id=user.id,
+        thread_id=thread_id,
+        action_type="propose_recipe_pick",
+        status="pending",
+        source_recipe_id=recipe.id,
+        payload_json=_json_dumps(
+            {"before": None, "after": after, "recipe_id": str(recipe.id)}
+        ),
+        diff_json=_json_dumps(
+            {
+                "fields": {
+                    "recipe": {"before": None, "after": after.get("name")},
+                    "cuisine": {"before": None, "after": after.get("cuisine")},
+                    "difficulty": {"before": None, "after": after.get("difficulty")},
+                }
+            }
+        ),
+        impact_json=_json_dumps(
+            {
+                "serving_text": "open catalog recipe",
+                "plan_schedule": "unchanged until weekly_plan_entries",
+                "shopping_list": "unchanged",
+                "list_reconciliation_queued": False,
+            }
+        ),
+        rationale=rationale,
+        idempotency_key=idempotency_key,
+        source_content_hash=content_hash({"recipe_id": str(recipe.id)}),
+    )
+    db.add(proposal)
+    db.commit()
+    db.refresh(proposal)
+    return proposal
+
+
+def apply_recipe_pick(
+    db: Session, user: User, proposal_id: UUID
+) -> SodieActionProposal:
+    """Approve a Tips recipe pick — no plan mutation; FE opens the catalog recipe."""
+    proposal = _get_owned_proposal(db, proposal_id, user.id)
+    if proposal.status == "applied":
+        return proposal
+    if proposal.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot approve proposal in status {proposal.status}",
+        )
+    if proposal.action_type != "propose_recipe_pick":
+        raise HTTPException(status_code=422, detail="Not a recipe pick proposal")
+    if not proposal.source_recipe_id:
+        raise HTTPException(status_code=500, detail="Recipe pick missing source recipe")
+
+    recipe = db.query(Recipe).filter(Recipe.id == proposal.source_recipe_id).first()
+    if not recipe:
+        proposal.status = "expired"
+        proposal.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        raise HTTPException(
+            status_code=409, detail="Suggested recipe is no longer available"
+        )
+
+    now = datetime.now(timezone.utc)
+    proposal.status = "applied"
+    proposal.applied_at = now
+    proposal.updated_at = now
+    db.commit()
+    db.refresh(proposal)
+    return proposal
+
+
 def apply_proposal(db: Session, user: User, proposal_id: UUID) -> SodieActionProposal:
     proposal = _get_owned_proposal(db, proposal_id, user.id)
     if proposal.action_type == "propose_preference_tweak":
         return apply_preference_tweak(db, user, proposal_id)
+    if proposal.action_type == "propose_recipe_pick":
+        return apply_recipe_pick(db, user, proposal_id)
     return apply_recipe_edit(db, user, proposal_id)
 
 

@@ -13,7 +13,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from app.constants import GENERATIVE_MODEL
-from app.schemas.sodie_proposals import RecipeEditPatch, RecipeEditPatchDraft, PreferenceTweakDraft
+from app.schemas.sodie_proposals import RecipeEditPatch, RecipeEditPatchDraft, PreferenceTweakDraft, RecipePickDraft
 from app.services.content_moderation import (
     LLM_POLICY_REJECT_MESSAGE,
     is_llm_content_policy_error,
@@ -301,7 +301,8 @@ PREFERENCE_TWEAK_SYSTEM = (
     "Intent (pick exactly one):\n"
     "- propose_preference — user wants to change allowlisted cooking preferences. "
     "Fill ONLY fields that should change.\n"
-    "- coach_qa — progress/analytics/cooking Q&A with no preference write. "
+    "- coach_qa — progress/analytics/cooking Q&A with no preference write, "
+    "OR asks to recommend/pick a recipe to cook next. "
     "assistant_reply may be a short placeholder (e.g. ok).\n"
     "- needs_more_info — preference ask is too vague. Ask a brief clarifying "
     "question in assistant_reply.\n\n"
@@ -366,4 +367,69 @@ def generate_preference_tweak(
 
     if not isinstance(draft, PreferenceTweakDraft):
         draft = PreferenceTweakDraft.model_validate(draft)
+    return draft
+
+
+RECIPE_PICK_SYSTEM = (
+    "You classify a cook's analytics follow-up about what to cook next.\n"
+    "Output must match RecipePickDraft.\n\n"
+    "Intent (pick exactly one):\n"
+    "- propose_recipe_pick — recommend ONE catalog recipe from CANDIDATES only. "
+    "Set recipe_id to that candidate’s id.\n"
+    "- coach_qa — progress/analytics/cooking Q&A with no recipe pick. "
+    "assistant_reply may be a short placeholder (e.g. ok).\n"
+    "- needs_more_info — ask is too vague to pick. Ask a brief clarifying "
+    "question in assistant_reply.\n\n"
+    "Never invent a recipe_id. If no candidate fits, use needs_more_info.\n"
+    "Prefer candidates matching the cook’s cuisine and time preferences when present.\n"
+)
+
+
+def build_recipe_pick_prompt(
+    candidates: list[Dict[str, Any]],
+    analytics_snapshot: str,
+    user_request: str,
+) -> list[BaseMessage]:
+    candidates_json = json.dumps(candidates, indent=2, default=str)
+    return [
+        SystemMessage(content=RECIPE_PICK_SYSTEM),
+        HumanMessage(
+            content=(
+                f"CANDIDATES (JSON — pick recipe_id only from these):\n"
+                f"{candidates_json}\n\n"
+                f"ANALYTICS CONTEXT:\n{analytics_snapshot}\n\n"
+                f"User message: {user_request}\n\n"
+                "Classify intent and produce the structured output."
+            )
+        ),
+    ]
+
+
+def generate_recipe_pick(
+    candidates: list[Dict[str, Any]],
+    analytics_snapshot: str,
+    user_request: str,
+) -> RecipePickDraft:
+    llm = ChatOpenAI(model=GENERATIVE_MODEL, temperature=0)
+    structured = llm.with_structured_output(RecipePickDraft)
+    messages = build_recipe_pick_prompt(candidates, analytics_snapshot, user_request)
+    try:
+        draft = structured.invoke(messages)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        if is_llm_content_policy_error(exc):
+            logger.warning("LLM content policy error: %s", type(exc).__name__)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=LLM_POLICY_REJECT_MESSAGE,
+            ) from exc
+        logger.exception("Recipe pick generation failed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not draft that recipe suggestion right now. Try again.",
+        ) from exc
+
+    if not isinstance(draft, RecipePickDraft):
+        draft = RecipePickDraft.model_validate(draft)
     return draft

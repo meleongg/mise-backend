@@ -704,3 +704,107 @@ def test_preference_from_request_persists_on_analytics_thread(
     assert listed.status_code == 200
     assert len(listed.json()) == 1
     assert listed.json()[0]["action_type"] == "propose_preference_tweak"
+
+
+def test_recipe_pick_from_request_proposes_and_approve(
+    client, db: Session, test_user: User, test_recipes: list, monkeypatch
+):
+    from app.schemas.sodie_proposals import RecipePickDraft
+    from uuid import UUID
+
+    recipe = test_recipes[0]
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_pick",
+        lambda *_a, **_k: RecipePickDraft(
+            intent="propose_recipe_pick",
+            recipe_id=UUID(str(recipe.id)),
+            change_summary="Matches your cuisine streak.",
+            assistant_reply="Here’s a recipe suggestion for your review.",
+        ),
+    )
+
+    created = client.post(
+        "/api/sodie/proposals/recipes/from-request",
+        json={
+            "request": "What should I cook next?",
+            "idempotency_key": "pick-recipe-1",
+        },
+    )
+    assert created.status_code == 200
+    body = created.json()
+    assert body["kind"] == "proposal"
+    proposal = body["proposal"]
+    assert proposal["action_type"] == "propose_recipe_pick"
+    assert proposal["source_recipe_id"] == str(recipe.id)
+    assert proposal["impact"]["plan_schedule"] == "unchanged until weekly_plan_entries"
+
+    approved = client.post(f"/api/sodie/proposals/{proposal['id']}/approve")
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "applied"
+    assert approved.json()["source_recipe_id"] == str(recipe.id)
+
+
+def test_recipe_pick_rejects_invented_id(
+    client, test_user: User, test_recipes: list, monkeypatch
+):
+    from app.schemas.sodie_proposals import RecipePickDraft
+    import uuid
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_pick",
+        lambda *_a, **_k: RecipePickDraft(
+            intent="propose_recipe_pick",
+            recipe_id=uuid.uuid4(),
+            change_summary="Invented.",
+            assistant_reply="Here’s one.",
+        ),
+    )
+    res = client.post(
+        "/api/sodie/proposals/recipes/from-request",
+        json={
+            "request": "Suggest something spicy",
+            "idempotency_key": "pick-invented-1",
+        },
+    )
+    assert res.status_code == 200
+    assert res.json()["kind"] == "needs_more_info"
+    assert res.json()["proposal"] is None
+
+
+def test_recipe_pick_coach_qa_falls_through(
+    client, test_user: User, test_recipes: list, monkeypatch
+):
+    from app.schemas.sodie_proposals import RecipePickDraft
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_pick",
+        lambda *_a, **_k: RecipePickDraft(
+            intent="coach_qa",
+            change_summary="Streak question.",
+            assistant_reply="ok",
+        ),
+    )
+    res = client.post(
+        "/api/sodie/proposals/recipes/from-request",
+        json={
+            "request": "How is my streak?",
+            "idempotency_key": "pick-coach-qa-1",
+        },
+    )
+    assert res.status_code == 200
+    assert res.json()["kind"] == "coach_qa"
+
+
+def test_recipe_pick_prompt_requires_candidates():
+    from app.services.sodie_llm import RECIPE_PICK_SYSTEM, build_recipe_pick_prompt
+
+    assert "propose_recipe_pick" in RECIPE_PICK_SYSTEM
+    assert "Never invent" in RECIPE_PICK_SYSTEM
+    messages = build_recipe_pick_prompt(
+        [{"id": "abc", "name": "Soup"}],
+        "ACTIVE PAGE: analytics",
+        "What should I cook?",
+    )
+    assert "CANDIDATES" in messages[1].content
+    assert "What should I cook?" in messages[1].content

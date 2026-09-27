@@ -192,3 +192,29 @@ class ProposePreferenceFromRequest(BaseModel):
     idempotency_key: str = Field(..., min_length=8, max_length=100)
     thread_id: Optional[UUID] = None
     pending_proposal_id: Optional[UUID] = None
+
+
+class RecipePickDraft(BaseModel):
+    """Structured LLM classification for analytics → catalog recipe picks."""
+
+    intent: Literal["propose_recipe_pick", "coach_qa", "needs_more_info"] = Field(
+        ...,
+        description=(
+            "propose_recipe_pick = choose one allowlisted catalog recipe_id; "
+            "coach_qa = analytics/progress Q&A with no recipe pick; "
+            "needs_more_info = ask is too vague to pick."
+        ),
+    )
+    recipe_id: Optional[UUID] = Field(
+        None,
+        description="Must be one of the provided candidate recipe IDs when proposing.",
+    )
+    change_summary: str = Field(..., min_length=1, max_length=300)
+    assistant_reply: str = Field(..., min_length=1, max_length=500)
+
+
+class ProposeRecipePickFromRequest(BaseModel):
+    request: str = Field(..., min_length=1, max_length=2000)
+    idempotency_key: str = Field(..., min_length=8, max_length=100)
+    thread_id: Optional[UUID] = None
+    pending_proposal_id: Optional[UUID] = None

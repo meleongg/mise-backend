@@ -20,6 +20,7 @@ from app.schemas.sodie_proposals import (
     ProposeRecipeEditFromRequest,
     ProposeRecipeEditRequest,
     ProposeRecipeEditResponse,
+    ProposeRecipePickFromRequest,
     SodieActionProposalResponse,
 )
 from app.utils.auth import get_current_user
@@ -34,6 +35,7 @@ from app.services.sodie_llm import (
     draft_to_recipe_edit_patch,
     generate_preference_tweak,
     generate_recipe_edit_patch,
+    generate_recipe_pick,
     invoke_chat_model,
 )
 from app.services import sodie_proposals as proposals
@@ -473,6 +475,112 @@ def create_preference_proposal_from_request(
         raise
 
     assistant = draft.assistant_reply or "Here’s a preference tweak for your review."
+    if thread:
+        _append_thread_turn(
+            db, thread, user_content=user_text, ai_content=assistant
+        )
+    return ProposeRecipeEditResponse(
+        kind="proposal",
+        proposal=_proposal_response(proposal),
+        assistant_message=assistant,
+    )
+
+
+@router.post(
+    "/proposals/recipes/from-request",
+    response_model=ProposeRecipeEditResponse,
+)
+def create_recipe_pick_from_request(
+    payload: ProposeRecipePickFromRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Classify analytics follow-up; propose a catalog recipe pick from allowlisted candidates."""
+    ensure_user_text_allowed(payload.request)
+    thread: Optional[SodieThread] = None
+    if payload.thread_id:
+        thread = _thread(db, payload.thread_id, current_user.id)
+
+    pending_proposal = None
+    if payload.pending_proposal_id:
+        pending_proposal = proposals.get_proposal(
+            db, current_user, payload.pending_proposal_id
+        )
+        if pending_proposal.status != "pending":
+            raise HTTPException(
+                status_code=409, detail="Pending proposal is no longer pending"
+            )
+        if pending_proposal.action_type != "propose_recipe_pick":
+            raise HTTPException(
+                status_code=422, detail="Pending proposal is not a recipe pick"
+            )
+
+    analytics_snapshot, _week = authorize_page_context(
+        db, current_user, "analytics", None
+    )
+    candidates = proposals.list_recipe_pick_candidates(db, current_user)
+    if not candidates:
+        assistant = (
+            "I don’t have catalog recipes to suggest yet. Try again after recipes "
+            "are available, or ask about your progress instead."
+        )
+        if thread:
+            _append_thread_turn(
+                db, thread, user_content=payload.request.strip(), ai_content=assistant
+            )
+        return ProposeRecipeEditResponse(
+            kind="needs_more_info",
+            assistant_message=assistant,
+        )
+
+    draft = generate_recipe_pick(
+        candidates, analytics_snapshot, payload.request.strip()
+    )
+    user_text = payload.request.strip()
+    allowed_ids = {row["id"] for row in candidates}
+
+    if draft.intent == "coach_qa":
+        return ProposeRecipeEditResponse(kind="coach_qa", assistant_message=None)
+
+    if draft.intent == "needs_more_info":
+        assistant = draft.assistant_reply or (
+            "What kind of recipe should I suggest — cuisine, time, or difficulty?"
+        )
+        if thread:
+            _append_thread_turn(
+                db, thread, user_content=user_text, ai_content=assistant
+            )
+        return ProposeRecipeEditResponse(
+            kind="needs_more_info",
+            assistant_message=assistant,
+        )
+
+    recipe_id = draft.recipe_id
+    if recipe_id is None or str(recipe_id) not in allowed_ids:
+        assistant = draft.assistant_reply or (
+            "I couldn’t match that to a catalog recipe. Tell me a cuisine or time budget."
+        )
+        if thread:
+            _append_thread_turn(
+                db, thread, user_content=user_text, ai_content=assistant
+            )
+        return ProposeRecipeEditResponse(
+            kind="needs_more_info",
+            assistant_message=assistant,
+        )
+
+    if pending_proposal:
+        proposals.reject_proposal(db, current_user, pending_proposal.id)
+
+    proposal = proposals.propose_recipe_pick(
+        db,
+        current_user,
+        recipe_id=recipe_id,
+        idempotency_key=payload.idempotency_key,
+        rationale=draft.change_summary or payload.request,
+        thread_id=payload.thread_id,
+    )
+    assistant = draft.assistant_reply or "Here’s a recipe suggestion for your review."
     if thread:
         _append_thread_turn(
             db, thread, user_content=user_text, ai_content=assistant
