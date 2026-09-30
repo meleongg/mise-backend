@@ -80,6 +80,18 @@ def _thread(db: Session, thread_id: UUID, user_id: UUID) -> SodieThread:
     return thread
 
 
+def _reject_kitchen_recipe_edits(thread: Optional[SodieThread]) -> None:
+    """Kitchen Mode is coach-only — do not attach recipe-edit proposals."""
+    if thread is not None and (thread.scope or "").strip().lower() == "kitchen":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Recipe edits are not available in Kitchen Mode. "
+                "Use Edit with Sodie from the recipe page."
+            ),
+        )
+
+
 def _proposal_response(proposal) -> SodieActionProposalResponse:
     return SodieActionProposalResponse(**proposals.serialize_proposal(proposal))
 
@@ -219,8 +231,10 @@ def create_proposal(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    thread = None
     if payload.thread_id:
-        _thread(db, payload.thread_id, current_user.id)
+        thread = _thread(db, payload.thread_id, current_user.id)
+        _reject_kitchen_recipe_edits(thread)
     proposal = proposals.propose_recipe_edit(
         db,
         current_user,
@@ -234,8 +248,7 @@ def create_proposal(
         "I prepared a personal recipe edit for your review. "
         "Approve to save a personal copy — the shared catalog recipe stays unchanged."
     )
-    if payload.thread_id:
-        thread = _thread(db, payload.thread_id, current_user.id)
+    if thread is not None:
         message = SodieMessage(thread_id=thread.id, sender="ai", content=assistant)
         thread.updated_at = datetime.now(timezone.utc)
         db.add(message)
@@ -285,6 +298,7 @@ def create_proposal_from_request(
     thread: Optional[SodieThread] = None
     if payload.thread_id:
         thread = _thread(db, payload.thread_id, current_user.id)
+        _reject_kitchen_recipe_edits(thread)
 
     recipe = db.query(Recipe).filter(Recipe.id == payload.source_recipe_id).first()
     if not recipe:

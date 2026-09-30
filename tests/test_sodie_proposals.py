@@ -479,6 +479,56 @@ def test_create_proposal_from_request_coach_qa_falls_through(
     assert body["proposal"] is None
 
 
+def test_kitchen_thread_rejects_recipe_edit_proposals(
+    client, test_user: User, test_recipes: list, monkeypatch
+):
+    """Kitchen Mode is coach-only — proposal endpoints must not attach edits."""
+    from app.schemas.sodie_proposals import IngredientLine, RecipeEditPatchDraft
+
+    recipe = test_recipes[0]
+    kitchen = client.post(
+        "/api/sodie/threads",
+        json={"scope": "kitchen", "context_id": str(recipe.id)},
+    )
+    assert kitchen.status_code == 200
+    thread_id = kitchen.json()["id"]
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_edit_patch",
+        lambda *_a, **_k: RecipeEditPatchDraft(
+            intent="propose_edit",
+            ingredients=[
+                IngredientLine(name="flour", measure="2 cups"),
+                IngredientLine(name="salt", measure="1 tsp"),
+            ],
+            change_summary="Increased salt.",
+            assistant_reply="Here’s a proposal.",
+        ),
+    )
+
+    from_request = client.post(
+        "/api/sodie/proposals/from-request",
+        json={
+            "source_recipe_id": str(recipe.id),
+            "thread_id": thread_id,
+            "request": "make it saltier",
+            "idempotency_key": "kitchen-block-from-request-1",
+        },
+    )
+    assert from_request.status_code == 409
+    assert "kitchen" in from_request.json()["detail"].lower()
+
+    direct = client.post(
+        "/api/sodie/proposals",
+        json={
+            **_propose_body(str(recipe.id), key="kitchen-block-direct-1"),
+            "thread_id": thread_id,
+        },
+    )
+    assert direct.status_code == 409
+    assert "kitchen" in direct.json()["detail"].lower()
+
+
 def test_create_proposal_from_request_clarify_keeps_pending(
     client, db: Session, test_user: User, test_recipes: list, monkeypatch
 ):
