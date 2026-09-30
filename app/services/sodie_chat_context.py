@@ -100,14 +100,21 @@ def _resolve_weekly_plan(
     db: Session, user_id: uuid.UUID, week_number: Optional[int]
 ) -> Optional[WeeklyPlan]:
     if week_number is not None:
-        return (
-            db.query(WeeklyPlan)
-            .filter(
-                WeeklyPlan.user_id == user_id,
-                WeeklyPlan.week_number == week_number,
+        try:
+            week_int = int(week_number)
+        except (TypeError, ValueError):
+            week_int = None
+        if week_int is None:
+            week_number = None
+        else:
+            return (
+                db.query(WeeklyPlan)
+                .filter(
+                    WeeklyPlan.user_id == user_id,
+                    WeeklyPlan.week_number == week_int,
+                )
+                .first()
             )
-            .first()
-        )
     return (
         db.query(WeeklyPlan)
         .filter(WeeklyPlan.user_id == user_id)
@@ -247,6 +254,20 @@ def authorize_page_context(
         more = ""
         if total > 12:
             more = f"\n- …and {total - 12} more items"
+        # Second tuple value is plan week for profile context (int|None), not
+        # the shopping list id — returning a UUID here breaks week_number filters.
+        week_for_profile = None
+        if active.weekly_plan_id:
+            linked = (
+                db.query(WeeklyPlan)
+                .filter(
+                    WeeklyPlan.id == active.weekly_plan_id,
+                    WeeklyPlan.user_id == user.id,
+                )
+                .first()
+            )
+            if linked:
+                week_for_profile = linked.week_number
         return (
             "ACTIVE PAGE: shopping\n"
             f"- List: {active.title} ({active.status})\n"
@@ -257,7 +278,7 @@ def authorize_page_context(
             + ("\n".join(preview) if preview else "  (empty)")
             + more
             + "\n",
-            str(active.id),
+            week_for_profile,
         )
 
     if scope == "personal_recipe":
