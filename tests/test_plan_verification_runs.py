@@ -8,6 +8,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
 from app.models import Recipe, RecipeVerificationRun, User
+from app.services.plan_evaluator import EVALUATOR_KIND, evaluate_plan_candidates
 from app.services.plan_verification import verify_plan_candidates
 from app.services.plan_verification_runs import (
     client_summary_for_failed_run,
@@ -121,6 +122,7 @@ def test_record_failed_and_passed_runs(db, test_user):
     db.flush()
     pass_gate = verify_plan_candidates(test_user, [safe.id], [safe])
     assert pass_gate.ok is True
+    evaluation = evaluate_plan_candidates(db, test_user, [safe])
     passed = record_plan_verification_run(
         db,
         user=test_user,
@@ -128,9 +130,17 @@ def test_record_failed_and_passed_runs(db, test_user):
         flow="regenerate",
         gate=pass_gate,
         candidate_ids=[safe.id],
+        evaluation=evaluation,
+        attempt_number=2,
+        auto_repaired=True,
     )
     db.flush()
     assert passed.final_status == "passed"
+    assert passed.evaluator_kind == EVALUATOR_KIND
+    assert passed.attempt_number == 2
+    output = json.loads(passed.evaluator_output_json)
+    assert output["auto_repaired"] is True
+    assert "confidence" in output
 
     latest = latest_verification_run_for_user(db, test_user.id)
     assert latest is not None
@@ -172,6 +182,7 @@ def test_eligibility_includes_last_failed_verification(client, db, test_user):
         flow="initial",
         gate=gate,
         candidate_ids=[bad.id],
+        attempt_number=2,
     )
     db.flush()
 
@@ -180,4 +191,6 @@ def test_eligibility_includes_last_failed_verification(client, db, test_user):
     body = response.json()
     assert body["last_generation_verification"] is not None
     assert "allergen_conflict" in body["last_generation_verification"]["failure_codes"]
+    assert body["last_generation_verification"]["attempt_number"] == 2
+    assert body["last_generation_verification"]["auto_repair_exhausted"] is True
     assert "Creamy Pasta" not in json.dumps(body)

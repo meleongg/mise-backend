@@ -346,6 +346,14 @@ class WeeklyPlanEntryResponse(BaseModel):
         return {}
 
 
+class GenerationSummary(BaseModel):
+    verification_run_id: str
+    attempt_number: int = 1
+    auto_repaired: bool = False
+    confidence: str
+    confidence_reasons: List[str] = []
+
+
 class WeeklyPlanResponse(BaseModel):
     id: UUID
     user_id: UUID
@@ -356,6 +364,7 @@ class WeeklyPlanResponse(BaseModel):
     recipes: List[RecipeResponse] = []
     entries: List[WeeklyPlanEntryResponse] = []
     swap_count: int = 0
+    generation_summary: Optional[GenerationSummary] = None
 
     model_config = {"from_attributes": True}
 
