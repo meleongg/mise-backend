@@ -38,6 +38,7 @@ from app.schemas import (
     RecipeResponse,
 )
 from app.services.sodie_chat_context import build_sodie_chat_context
+from app.services.plan_verification import verify_plan_candidates
 from app.utils.uuid_helpers import uuids_to_strs, strs_to_uuids
 from app.utils.prompt_helpers import get_goal_description, get_skill_description
 from app.utils.auth import get_current_user, require_same_user
@@ -574,6 +575,18 @@ async def generate_user_plan_endpoint(
         # Convert string IDs back to UUIDs for database storage
         final_recipe_ids: List[uuid.UUID] = strs_to_uuids(final_recipe_ids_str)
 
+        loaded = (
+            db.query(Recipe).filter(Recipe.id.in_(final_recipe_ids)).all()
+            if final_recipe_ids
+            else []
+        )
+        gate = verify_plan_candidates(user, final_recipe_ids, loaded)
+        if not gate.ok:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=gate.as_detail(),
+            )
+
         new_plan = await plan_service.generate_weekly_plan(
             user=user,
             week_number=week_number,
@@ -584,6 +597,8 @@ async def generate_user_plan_endpoint(
 
         return new_plan
 
+    except HTTPException:
+        raise
     except ValueError as e:
         print("ValueError:", e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -860,6 +875,18 @@ async def generate_next_week_plan(
 
         final_recipe_ids: List[uuid.UUID] = strs_to_uuids(final_recipe_ids_str)
 
+        loaded = (
+            db.query(Recipe).filter(Recipe.id.in_(final_recipe_ids)).all()
+            if final_recipe_ids
+            else []
+        )
+        gate = verify_plan_candidates(user, final_recipe_ids, loaded)
+        if not gate.ok:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=gate.as_detail(),
+            )
+
         # Generate the weekly plan (this will create progress entries too)
         new_plan = await plan_service.generate_weekly_plan(
             user=user,
@@ -872,6 +899,8 @@ async def generate_next_week_plan(
 
         return new_plan
 
+    except HTTPException:
+        raise
     except ValueError as e:
         print(f"[GenerateNextWeek] ValueError: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
