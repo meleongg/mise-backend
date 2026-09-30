@@ -43,6 +43,32 @@ class PlanVerificationResult:
             "failures": [f.as_dict() for f in self.failures],
         }
 
+    def failure_codes(self) -> list[str]:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for failure in self.failures:
+            if failure.code in seen:
+                continue
+            seen.add(failure.code)
+            ordered.append(failure.code)
+        return ordered
+
+    def as_client_detail(
+        self, *, verification_run_id: Optional[str] = None
+    ) -> dict[str, Any]:
+        """HTTP-safe detail: codes only, never recipe IDs or names."""
+        payload: dict[str, Any] = {
+            "code": "plan_verification_failed",
+            "message": (
+                "This plan could not be verified against your preferences. "
+                "No recipes were saved. Try generating again."
+            ),
+            "failure_codes": self.failure_codes(),
+        }
+        if verification_run_id:
+            payload["verification_run_id"] = verification_run_id
+        return payload
+
 
 def _parse_json_list(raw: Optional[str]) -> list[str]:
     if not raw or not str(raw).strip():

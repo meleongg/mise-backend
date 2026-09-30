@@ -39,6 +39,11 @@ from app.schemas import (
 )
 from app.services.sodie_chat_context import build_sodie_chat_context
 from app.services.plan_verification import verify_plan_candidates
+from app.services.plan_verification_runs import (
+    client_summary_for_failed_run,
+    latest_verification_run_for_user,
+    record_plan_verification_run,
+)
 from app.utils.uuid_helpers import uuids_to_strs, strs_to_uuids
 from app.utils.prompt_helpers import get_goal_description, get_skill_description
 from app.utils.auth import get_current_user, require_same_user
@@ -581,10 +586,22 @@ async def generate_user_plan_endpoint(
             else []
         )
         gate = verify_plan_candidates(user, final_recipe_ids, loaded)
+        flow = "regenerate" if existing_plan else "initial"
         if not gate.ok:
+            run = record_plan_verification_run(
+                db,
+                user=user,
+                target_week_number=week_number,
+                flow=flow,
+                gate=gate,
+                candidate_ids=final_recipe_ids,
+                search_attempts=runtime_state.search_attempts,
+                generation_attempts=runtime_state.generation_attempts,
+            )
+            db.commit()
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=gate.as_detail(),
+                detail=gate.as_client_detail(verification_run_id=str(run.id)),
             )
 
         new_plan = await plan_service.generate_weekly_plan(
@@ -593,6 +610,17 @@ async def generate_user_plan_endpoint(
             recipe_ids_from_agent=final_recipe_ids,
             db=db,
         )
+        record_plan_verification_run(
+            db,
+            user=user,
+            target_week_number=week_number,
+            flow=flow,
+            gate=gate,
+            candidate_ids=final_recipe_ids,
+            search_attempts=runtime_state.search_attempts,
+            generation_attempts=runtime_state.generation_attempts,
+        )
+        db.commit()
         print("New plan:", new_plan)
 
         return new_plan
@@ -631,11 +659,16 @@ async def check_next_week_eligibility(
         next_week: the next week number to be generated
         completion_status: progress details (completed/total recipes)
         message: human-readable status message
+        last_generation_verification: optional failed-run summary (codes only)
     """
     require_same_user(current_user, user_id)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
+
+    last_verification = client_summary_for_failed_run(
+        latest_verification_run_for_user(db, user_id)
+    )
 
     # Get most recent plan
     last_plan = (
@@ -652,6 +685,7 @@ async def check_next_week_eligibility(
             "next_week": 1,
             "completion_status": "0/0",
             "message": "No plans exist yet. Generate your first week's plan.",
+            "last_generation_verification": last_verification,
         }
 
     current_week = last_plan.week_number
@@ -673,6 +707,7 @@ async def check_next_week_eligibility(
             "next_week": current_week + 1,
             "completion_status": "0/0",
             "message": f"No progress entries found for week {current_week}.",
+            "last_generation_verification": last_verification,
         }
 
     completed_count = sum(
@@ -692,6 +727,7 @@ async def check_next_week_eligibility(
             if can_generate
             else f"Complete week {current_week} first. Progress: {completed_count}/{total_count} recipes."
         ),
+        "last_generation_verification": last_verification,
     }
 
 
@@ -882,9 +918,20 @@ async def generate_next_week_plan(
         )
         gate = verify_plan_candidates(user, final_recipe_ids, loaded)
         if not gate.ok:
+            run = record_plan_verification_run(
+                db,
+                user=user,
+                target_week_number=next_week_number,
+                flow="next_week",
+                gate=gate,
+                candidate_ids=final_recipe_ids,
+                search_attempts=runtime_state.search_attempts,
+                generation_attempts=runtime_state.generation_attempts,
+            )
+            db.commit()
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=gate.as_detail(),
+                detail=gate.as_client_detail(verification_run_id=str(run.id)),
             )
 
         # Generate the weekly plan (this will create progress entries too)
@@ -894,6 +941,17 @@ async def generate_next_week_plan(
             recipe_ids_from_agent=final_recipe_ids,
             db=db,
         )
+        record_plan_verification_run(
+            db,
+            user=user,
+            target_week_number=next_week_number,
+            flow="next_week",
+            gate=gate,
+            candidate_ids=final_recipe_ids,
+            search_attempts=runtime_state.search_attempts,
+            generation_attempts=runtime_state.generation_attempts,
+        )
+        db.commit()
 
         print(f"[GenerateNextWeek] ✅ Week {next_week_number} generated successfully")
 

@@ -111,6 +111,11 @@ class User(Base):
     shopping_lists = relationship(
         "ShoppingList", back_populates="user", cascade="all, delete-orphan"
     )
+    recipe_verification_runs = relationship(
+        "RecipeVerificationRun",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 class UserPantryItem(Base):
@@ -427,3 +432,31 @@ class ShoppingListItemSource(Base):
 
     shopping_list_item = relationship("ShoppingListItem", back_populates="sources")
     weekly_plan_entry = relationship("WeeklyPlanEntry")
+
+
+class RecipeVerificationRun(Base):
+    """Audit row for a weekly-plan generate gate (and future evaluator) attempt."""
+
+    __tablename__ = "recipe_verification_runs"
+
+    id = Column(GUID, primary_key=True, default=uuid.uuid4, index=True)
+    user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
+    target_week_number = Column(Integer, nullable=False)
+    flow = Column(String(20), nullable=False)  # initial, regenerate, next_week
+    attempt_number = Column(Integer, nullable=False, default=1)
+    final_status = Column(String(20), nullable=False)  # passed, failed
+    deterministic_passed = Column(Boolean, nullable=False, default=False)
+    failure_codes_json = Column(Text, nullable=False, default="[]")
+    failures_detail_json = Column(Text, nullable=True)
+    candidate_count = Column(Integer, nullable=False, default=0)
+    candidate_recipe_ids_json = Column(Text, nullable=True)
+    search_attempts = Column(Integer, nullable=True)
+    generation_attempts = Column(Integer, nullable=True)
+    evaluator_kind = Column(String(40), nullable=False, default="deterministic_stub_v1")
+    evaluator_passed = Column(Boolean, nullable=True)
+    evaluator_output_json = Column(Text, nullable=True)
+    evaluator_model_id = Column(String(100), nullable=True)
+    display_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User", back_populates="recipe_verification_runs")
