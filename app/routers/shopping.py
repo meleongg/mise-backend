@@ -8,6 +8,7 @@ from app.database import get_db
 from app.models import User
 from app.schemas import (
     GenerateShoppingListRequest,
+    ShoppingCheckSyncRequest,
     ShoppingListResponse,
     UpdateShoppingListItemRequest,
 )
@@ -48,6 +49,23 @@ def generate_shopping_list(
 ):
     shopping_list = shopping_service.generate_or_refresh_shopping_list(
         db, current_user, payload.week_number
+    )
+    return _list_response(db, current_user, shopping_list)
+
+
+@router.post(
+    "/shopping-lists/sync-checks", response_model=ShoppingListResponse
+)
+def sync_shopping_checks(
+    payload: ShoppingCheckSyncRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Flush queued offline check toggles (last client_updated_at per item wins)."""
+    shopping_list = shopping_service.sync_shopping_check_states(
+        db,
+        current_user,
+        [item.model_dump() for item in payload.updates],
     )
     return _list_response(db, current_user, shopping_list)
 

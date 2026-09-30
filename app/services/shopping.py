@@ -575,6 +575,84 @@ def update_shopping_list_item(
     return _load_list(db, item.shopping_list_id, user.id)
 
 
+def sync_shopping_check_states(
+    db: Session,
+    user: User,
+    updates: list[dict[str, Any]],
+) -> ShoppingList:
+    """Apply queued check toggles; last client_updated_at per item_id wins.
+
+    Unknown or unauthorized item ids are skipped (offline queues may be stale).
+    """
+    if not updates:
+        raise HTTPException(status_code=422, detail="No check updates provided")
+
+    latest: dict[uuid.UUID, dict[str, Any]] = {}
+    for raw in updates:
+        item_id = raw.get("item_id")
+        if item_id is None:
+            continue
+        if not isinstance(item_id, uuid.UUID):
+            try:
+                item_id = uuid.UUID(str(item_id))
+            except (TypeError, ValueError):
+                continue
+        client_at = raw.get("client_updated_at")
+        if client_at is None:
+            continue
+        if getattr(client_at, "tzinfo", None) is None:
+            client_at = client_at.replace(tzinfo=timezone.utc)
+        prev = latest.get(item_id)
+        if prev is None or client_at >= prev["client_updated_at"]:
+            latest[item_id] = {
+                "item_id": item_id,
+                "is_checked": bool(raw.get("is_checked")),
+                "client_updated_at": client_at,
+            }
+
+    if not latest:
+        raise HTTPException(status_code=422, detail="No valid check updates")
+
+    item_ids = list(latest.keys())
+    rows = (
+        db.query(ShoppingListItem)
+        .join(ShoppingList)
+        .filter(
+            ShoppingListItem.id.in_(item_ids),
+            ShoppingList.user_id == user.id,
+        )
+        .all()
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="No matching shopping list items")
+
+    list_ids = {row.shopping_list_id for row in rows}
+    if len(list_ids) != 1:
+        raise HTTPException(
+            status_code=422,
+            detail="Check sync updates must belong to one shopping list",
+        )
+
+    by_id = {row.id: row for row in rows}
+    touched_list_id = next(iter(list_ids))
+    now = _now()
+    for item_id, payload in latest.items():
+        item = by_id.get(item_id)
+        if item is None:
+            continue
+        item.is_checked = payload["is_checked"]
+        client_at = payload["client_updated_at"]
+        # Clamp far-future client clocks to server now (±5 minutes skew OK).
+        if client_at.timestamp() - now.timestamp() > 300:
+            item.updated_at = now
+        else:
+            item.updated_at = client_at
+    shopping_list = rows[0].shopping_list
+    shopping_list.updated_at = now
+    db.commit()
+    return _load_list(db, touched_list_id, user.id)
+
+
 def update_plan_entry_servings(
     db: Session, user: User, entry_id: uuid.UUID, selected_servings: Optional[str]
 ) -> WeeklyPlanEntry:

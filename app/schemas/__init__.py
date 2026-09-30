@@ -546,5 +546,15 @@ class UpdateShoppingListItemRequest(BaseModel):
     confirm_pantry_omit: Optional[bool] = None
 
 
+class ShoppingCheckSyncItem(BaseModel):
+    item_id: UUID
+    is_checked: bool
+    client_updated_at: datetime
+
+
+class ShoppingCheckSyncRequest(BaseModel):
+    updates: List[ShoppingCheckSyncItem] = Field(..., min_length=1, max_length=200)
+
+
 class UpdatePlanEntryServingsRequest(BaseModel):
     selected_servings: Optional[str] = Field(None, max_length=50)
