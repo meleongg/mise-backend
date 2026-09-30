@@ -516,7 +516,7 @@ def test_kitchen_thread_rejects_recipe_edit_proposals(
         },
     )
     assert from_request.status_code == 409
-    assert "kitchen" in from_request.json()["detail"].lower()
+    assert "recipe" in from_request.json()["detail"].lower()
 
     direct = client.post(
         "/api/sodie/proposals",
@@ -526,7 +526,95 @@ def test_kitchen_thread_rejects_recipe_edit_proposals(
         },
     )
     assert direct.status_code == 409
-    assert "kitchen" in direct.json()["detail"].lower()
+    assert "recipe" in direct.json()["detail"].lower()
+
+
+def test_shopping_thread_rejects_recipe_edit_proposals(
+    client, test_user: User, test_recipes: list, monkeypatch
+):
+    """Peer leak: non-recipe scopes must not attach recipe-edit proposals."""
+    from app.schemas.sodie_proposals import IngredientLine, RecipeEditPatchDraft
+
+    recipe = test_recipes[0]
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_edit_patch",
+        lambda *_a, **_k: RecipeEditPatchDraft(
+            intent="propose_edit",
+            ingredients=[IngredientLine(name="salt", measure="1 tsp")],
+            change_summary="More salt.",
+            assistant_reply="Here’s a proposal.",
+        ),
+    )
+
+    shopping = client.post("/api/sodie/threads", json={"scope": "shopping"})
+    assert shopping.status_code == 200, shopping.text
+    thread_id = shopping.json()["id"]
+
+    res = client.post(
+        "/api/sodie/proposals/from-request",
+        json={
+            "source_recipe_id": str(recipe.id),
+            "thread_id": thread_id,
+            "request": "make it saltier",
+            "idempotency_key": "shopping-block-from-request-1",
+        },
+    )
+    assert res.status_code == 409
+    assert "recipe" in res.json()["detail"].lower()
+
+
+def test_non_analytics_thread_rejects_preference_and_pick_proposals(
+    client, test_user: User, test_recipes: list, monkeypatch
+):
+    """Preference tweaks and recipe picks belong on analytics threads only."""
+    from app.schemas.sodie_proposals import PreferenceTweakDraft, RecipePickDraft
+
+    recipe_thread = client.post(
+        "/api/sodie/threads",
+        json={"scope": "recipe", "context_id": str(test_recipes[0].id)},
+    )
+    assert recipe_thread.status_code == 200
+    thread_id = recipe_thread.json()["id"]
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_preference_tweak",
+        lambda *_a, **_k: PreferenceTweakDraft(
+            intent="propose_preference",
+            max_cook_time_minutes=40,
+            change_summary="Shorter cook time.",
+            assistant_reply="Here’s a tweak.",
+        ),
+    )
+    pref = client.post(
+        "/api/sodie/proposals/preferences/from-request",
+        json={
+            "thread_id": thread_id,
+            "request": "Shorten my max cook time",
+            "idempotency_key": "scope-block-pref-1",
+        },
+    )
+    assert pref.status_code == 409
+    assert "analytics" in pref.json()["detail"].lower()
+
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_pick",
+        lambda *_a, **_k: RecipePickDraft(
+            intent="propose_recipe_pick",
+            recipe_id=str(test_recipes[0].id),
+            change_summary="A pick.",
+            assistant_reply="Here’s a pick.",
+        ),
+    )
+    pick = client.post(
+        "/api/sodie/proposals/recipes/from-request",
+        json={
+            "thread_id": thread_id,
+            "request": "Suggest an easy pasta",
+            "idempotency_key": "scope-block-pick-1",
+        },
+    )
+    assert pick.status_code == 409
+    assert "analytics" in pick.json()["detail"].lower()
 
 
 def test_create_proposal_from_request_clarify_keeps_pending(

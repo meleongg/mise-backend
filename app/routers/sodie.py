@@ -80,16 +80,32 @@ def _thread(db: Session, thread_id: UUID, user_id: UUID) -> SodieThread:
     return thread
 
 
-def _reject_kitchen_recipe_edits(thread: Optional[SodieThread]) -> None:
-    """Kitchen Mode is coach-only — do not attach recipe-edit proposals."""
-    if thread is not None and (thread.scope or "").strip().lower() == "kitchen":
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Recipe edits are not available in Kitchen Mode. "
-                "Use Edit with Sodie from the recipe page."
-            ),
-        )
+def _require_thread_scope(
+    thread: Optional[SodieThread],
+    *,
+    allowed: frozenset[str],
+    detail: str,
+) -> None:
+    """Reject proposals attached to threads outside the allowlisted page scopes."""
+    if thread is None:
+        return
+    scope = (thread.scope or "").strip().lower() or "global"
+    if scope not in allowed:
+        raise HTTPException(status_code=409, detail=detail)
+
+
+_RECIPE_EDIT_SCOPES = frozenset({"recipe"})
+_ANALYTICS_PROPOSAL_SCOPES = frozenset({"analytics"})
+_RECIPE_EDIT_SCOPE_DETAIL = (
+    "Recipe edits require a recipe-scoped chat. "
+    "Use Edit with Sodie from the recipe page."
+)
+_ANALYTICS_PREF_SCOPE_DETAIL = (
+    "Preference tweaks are only available from Analytics Tips."
+)
+_ANALYTICS_PICK_SCOPE_DETAIL = (
+    "Recipe suggestions are only available from Analytics Tips."
+)
 
 
 def _proposal_response(proposal) -> SodieActionProposalResponse:
@@ -234,7 +250,11 @@ def create_proposal(
     thread = None
     if payload.thread_id:
         thread = _thread(db, payload.thread_id, current_user.id)
-        _reject_kitchen_recipe_edits(thread)
+        _require_thread_scope(
+            thread,
+            allowed=_RECIPE_EDIT_SCOPES,
+            detail=_RECIPE_EDIT_SCOPE_DETAIL,
+        )
     proposal = proposals.propose_recipe_edit(
         db,
         current_user,
@@ -298,7 +318,11 @@ def create_proposal_from_request(
     thread: Optional[SodieThread] = None
     if payload.thread_id:
         thread = _thread(db, payload.thread_id, current_user.id)
-        _reject_kitchen_recipe_edits(thread)
+        _require_thread_scope(
+            thread,
+            allowed=_RECIPE_EDIT_SCOPES,
+            detail=_RECIPE_EDIT_SCOPE_DETAIL,
+        )
 
     recipe = db.query(Recipe).filter(Recipe.id == payload.source_recipe_id).first()
     if not recipe:
@@ -463,6 +487,11 @@ def create_preference_proposal_from_request(
     thread: Optional[SodieThread] = None
     if payload.thread_id:
         thread = _thread(db, payload.thread_id, current_user.id)
+        _require_thread_scope(
+            thread,
+            allowed=_ANALYTICS_PROPOSAL_SCOPES,
+            detail=_ANALYTICS_PREF_SCOPE_DETAIL,
+        )
 
     pending_proposal = None
     if payload.pending_proposal_id:
@@ -576,6 +605,11 @@ def create_recipe_pick_from_request(
     thread: Optional[SodieThread] = None
     if payload.thread_id:
         thread = _thread(db, payload.thread_id, current_user.id)
+        _require_thread_scope(
+            thread,
+            allowed=_ANALYTICS_PROPOSAL_SCOPES,
+            detail=_ANALYTICS_PICK_SCOPE_DETAIL,
+        )
 
     pending_proposal = None
     if payload.pending_proposal_id:
