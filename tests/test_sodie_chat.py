@@ -78,6 +78,44 @@ def test_prompt_context_combines_profile_and_page(db, test_user, test_recipes):
     assert "Kitchen Mode" in text
 
 
+def test_kitchen_live_state_appended_only_for_kitchen_scope(
+    db, test_user, test_recipes
+):
+    from app.services.sodie_chat_context import format_kitchen_live_state
+
+    recipe = test_recipes[0]
+    state = {
+        "current_step_index": 1,
+        "total_steps": 4,
+        "current_step_text": "Simmer the sauce for 10 minutes.",
+        "checked_ingredients": 3,
+        "total_ingredients": 8,
+    }
+    kitchen_text = build_sodie_prompt_context(
+        db,
+        test_user,
+        scope="kitchen",
+        context_id=str(recipe.id),
+        kitchen_state=state,
+    )
+    assert "KITCHEN LIVE STATE:" in kitchen_text
+    assert "Current step: 2 of 4" in kitchen_text
+    assert "Simmer the sauce for 10 minutes." in kitchen_text
+    assert "3 of 8 ingredients" in kitchen_text
+
+    recipe_text = build_sodie_prompt_context(
+        db,
+        test_user,
+        scope="recipe",
+        context_id=str(recipe.id),
+        kitchen_state=state,
+    )
+    assert "KITCHEN LIVE STATE:" not in recipe_text
+
+    live = format_kitchen_live_state(state)
+    assert "Prefer concise help" in live
+
+
 def test_settings_scope_omits_profile_and_plan(db, test_user, test_plan):
     text = build_sodie_prompt_context(db, test_user, scope="settings")
     assert "ACTIVE PAGE: settings" in text
