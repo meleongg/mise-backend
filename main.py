@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from app.routers import users, recipes, weekly_plans, feedback, auth, plan_agent, sodie, personal_recipes
+from app.routers import users, recipes, weekly_plans, feedback, auth, plan_agent, sodie, personal_recipes, shopping
 from app.agents.checkpoint_setup import initialize_postgres_saver
 from app.core.rate_limit import limiter
 from app.database import engine
@@ -77,6 +77,7 @@ app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(plan_agent.router, prefix="/plan", tags=["plan generation"])
 app.include_router(sodie.router, prefix="/api/sodie", tags=["sodie"])
 app.include_router(personal_recipes.router, prefix="/api", tags=["personal-recipes"])
+app.include_router(shopping.router, prefix="/api", tags=["shopping"])
 
 
 @app.get("/")

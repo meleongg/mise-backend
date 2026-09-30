@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.constants import MAX_SWAPS_PER_WEEK
 from app.models import PersonalRecipe, Recipe, User, UserRecipeProgress, WeeklyPlan
 from app.services.weekly_plan import WeeklyPlanService, parse_recipe_schedule
+from app.services import shopping as shopping_service
 from app.utils.prompt_helpers import get_goal_description, get_skill_description
 
 SUPPORTED_SODIE_SCOPES = frozenset(
@@ -228,11 +229,35 @@ def authorize_page_context(
         return _analytics_page_snapshot(db, user), None
 
     if scope == "shopping":
+        active = shopping_service.get_active_shopping_list(db, user)
+        if not active:
+            return (
+                "ACTIVE PAGE: shopping\n"
+                "- No active shopping list yet. Suggest generating from the "
+                "weekly plan; do not invent list items.\n",
+                None,
+            )
+        checked = sum(1 for item in active.items if item.is_checked)
+        total = len(active.items or [])
+        preview = []
+        for item in (active.items or [])[:12]:
+            mark = "✓" if item.is_checked else "○"
+            review = " (review)" if item.needs_review else ""
+            preview.append(f"  {mark} {item.display_text}{review}")
+        more = ""
+        if total > 12:
+            more = f"\n- …and {total - 12} more items"
         return (
             "ACTIVE PAGE: shopping\n"
-            "- Shopping mode context is not available yet; answer with general "
-            "prep/shopping advice without inventing list items.\n",
-            None,
+            f"- List: {active.title} ({active.status})\n"
+            f"- Retailer snapshot: {active.retailer_snapshot or 'not set'}\n"
+            f"- Location snapshot: {active.location_snapshot or 'not set'}\n"
+            f"- Progress: {checked}/{total} checked\n"
+            "- Items (do not invent extras):\n"
+            + ("\n".join(preview) if preview else "  (empty)")
+            + more
+            + "\n",
+            str(active.id),
         )
 
     if scope == "personal_recipe":

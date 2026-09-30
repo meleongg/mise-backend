@@ -433,3 +433,61 @@ class SwapRecipeResponse(BaseModel):
     old_recipe: RecipeResponse
     new_recipe: RecipeResponse
     message: str
+
+
+class ShoppingListItemSourceResponse(BaseModel):
+    id: UUID
+    shopping_list_item_id: UUID
+    weekly_plan_entry_id: UUID
+    source_amount: Optional[str] = None
+    inclusion_state: str = "included"
+
+    model_config = {"from_attributes": True}
+
+
+class ShoppingListItemResponse(BaseModel):
+    id: UUID
+    shopping_list_id: UUID
+    normalized_name: str
+    display_text: str
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    aisle: Optional[str] = None
+    is_checked: bool = False
+    is_user_edit: bool = False
+    needs_review: bool = False
+    confidence: Optional[str] = None
+    reason: Optional[str] = None
+    sort_order: int = 0
+    sources: List[ShoppingListItemSourceResponse] = []
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class ShoppingListResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    weekly_plan_id: Optional[UUID] = None
+    title: str
+    status: str
+    retailer_snapshot: Optional[str] = None
+    location_snapshot: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    archived_at: Optional[datetime] = None
+    items: List[ShoppingListItemResponse] = []
+
+    model_config = {"from_attributes": True}
+
+
+class GenerateShoppingListRequest(BaseModel):
+    week_number: int = Field(..., ge=1)
+
+
+class UpdateShoppingListItemRequest(BaseModel):
+    is_checked: Optional[bool] = None
+    display_text: Optional[str] = Field(None, min_length=1, max_length=300)
+    quantity: Optional[float] = None
+    unit: Optional[str] = Field(None, max_length=50)
