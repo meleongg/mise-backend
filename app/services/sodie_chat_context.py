@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -510,12 +510,54 @@ def build_sodie_chat_context(
     return "\n".join(lines)
 
 
+def format_kitchen_live_state(kitchen_state: Optional[Any]) -> str:
+    """Serialize client-provided kitchen progress for coach prompts."""
+    if kitchen_state is None:
+        return ""
+    if hasattr(kitchen_state, "model_dump"):
+        data = kitchen_state.model_dump()
+    elif isinstance(kitchen_state, dict):
+        data = kitchen_state
+    else:
+        return ""
+
+    try:
+        idx = int(data.get("current_step_index", 0))
+        total = int(data.get("total_steps", 0))
+        checked = int(data.get("checked_ingredients", 0))
+        ing_total = int(data.get("total_ingredients", 0))
+    except (TypeError, ValueError):
+        return ""
+
+    step_text = str(data.get("current_step_text") or "").strip()
+    if len(step_text) > 500:
+        step_text = step_text[:500].rstrip() + "…"
+
+    display_step = idx + 1 if total > 0 else 0
+    lines = [
+        "KITCHEN LIVE STATE:",
+        f"- Current step: {display_step} of {total}",
+    ]
+    if step_text:
+        lines.append(f"- Current step text: {step_text}")
+    if ing_total > 0:
+        lines.append(
+            f"- Mise en place checked: {checked} of {ing_total} ingredients"
+        )
+    lines.append(
+        "- Prefer concise help for this active step. Do not invent timers "
+        "or silent recipe edits."
+    )
+    return "\n".join(lines) + "\n"
+
+
 def build_sodie_prompt_context(
     db: Session,
     user: User,
     *,
     scope: str = "global",
     context_id: Optional[str] = None,
+    kitchen_state: Optional[Any] = None,
 ) -> str:
     """Profile/plan context plus authorized page snapshot for coach prompts."""
     page_block, week_number = authorize_page_context(db, user, scope, context_id)
@@ -523,4 +565,10 @@ def build_sodie_prompt_context(
     if (scope or "").strip().lower() == "settings":
         return page_block
     profile = build_sodie_chat_context(db, user, week_number=week_number)
-    return f"{profile}\n\n{page_block}"
+    parts = [profile, page_block]
+    # Live step state is only trusted when the thread is already kitchen-scoped.
+    if (scope or "").strip().lower() == "kitchen" and kitchen_state is not None:
+        live = format_kitchen_live_state(kitchen_state)
+        if live:
+            parts.append(live)
+    return "\n\n".join(parts)

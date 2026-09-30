@@ -44,7 +44,14 @@ from langchain_openai import ChatOpenAI
 router = APIRouter()
 
 
-def _coach_response(user: User, thread: SodieThread, content: str, db: Session) -> str:
+def _coach_response(
+    user: User,
+    thread: SodieThread,
+    content: str,
+    db: Session,
+    *,
+    kitchen_state=None,
+) -> str:
     ensure_user_text_allowed(content)
     scope = thread.scope or "global"
     context = build_sodie_prompt_context(
@@ -52,6 +59,7 @@ def _coach_response(user: User, thread: SodieThread, content: str, db: Session) 
         user,
         scope=scope,
         context_id=thread.context_id,
+        kitchen_state=kitchen_state if scope == "kitchen" else None,
     )
     mode = "analytics" if scope == "analytics" else "general_knowledge"
     return invoke_chat_model(
@@ -179,7 +187,13 @@ def chat(
     )
     db.add(user_message)
     db.flush()
-    reply = _coach_response(current_user, thread, user_message.content, db)
+    reply = _coach_response(
+        current_user,
+        thread,
+        user_message.content,
+        db,
+        kitchen_state=payload.kitchen_state,
+    )
     ai_message = SodieMessage(thread_id=thread.id, sender="ai", content=reply)
     thread.updated_at = datetime.now(timezone.utc)
     db.add(ai_message)

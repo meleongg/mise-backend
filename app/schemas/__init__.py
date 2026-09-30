@@ -151,8 +151,19 @@ class SodieThreadCreate(BaseModel):
     is_temporary: bool = False
 
 
+class SodieKitchenState(BaseModel):
+    """Live Kitchen Mode progress for coach prompts (not persisted)."""
+
+    current_step_index: int = Field(..., ge=0, le=200)
+    total_steps: int = Field(..., ge=0, le=200)
+    current_step_text: Optional[str] = Field(None, max_length=500)
+    checked_ingredients: int = Field(0, ge=0, le=500)
+    total_ingredients: int = Field(0, ge=0, le=500)
+
+
 class SodieMessageCreate(BaseModel):
     content: str = Field(..., min_length=1, max_length=2000)
+    kitchen_state: Optional[SodieKitchenState] = None
 
 
 class SodieMessageResponse(BaseModel):
