@@ -38,11 +38,16 @@ from app.schemas import (
     RecipeResponse,
 )
 from app.services.sodie_chat_context import build_sodie_chat_context
-from app.services.plan_verification import verify_plan_candidates
+from app.services.plan_verification import build_repair_intent_suffix
 from app.services.plan_verification_runs import (
     client_summary_for_failed_run,
     latest_verification_run_for_user,
-    record_plan_verification_run,
+)
+from app.services.plan_generate_verified import (
+    MAX_PLAN_GENERATE_ATTEMPTS,
+    load_and_verify,
+    persist_verified_plan,
+    record_failed_attempt,
 )
 from app.utils.uuid_helpers import uuids_to_strs, strs_to_uuids
 from app.utils.prompt_helpers import get_goal_description, get_skill_description
@@ -577,53 +582,72 @@ async def generate_user_plan_endpoint(
                 "The Adaptive Planner Agent failed to select final recipe IDs."
             )
 
-        # Convert string IDs back to UUIDs for database storage
-        final_recipe_ids: List[uuid.UUID] = strs_to_uuids(final_recipe_ids_str)
-
-        loaded = (
-            db.query(Recipe).filter(Recipe.id.in_(final_recipe_ids)).all()
-            if final_recipe_ids
-            else []
-        )
-        gate = verify_plan_candidates(user, final_recipe_ids, loaded)
         flow = "regenerate" if existing_plan else "initial"
-        if not gate.ok:
-            run = record_plan_verification_run(
-                db,
+        attempt = 1
+        while True:
+            final_recipe_ids: List[uuid.UUID] = strs_to_uuids(
+                runtime_state.candidate_recipes
+                or final_state.get("candidate_recipes", [])
+            )
+            if not final_recipe_ids:
+                raise ValueError(
+                    "The Adaptive Planner Agent failed to select final recipe IDs."
+                )
+            loaded, gate = load_and_verify(db, user, final_recipe_ids)
+            if not gate.ok:
+                run_id = record_failed_attempt(
+                    db,
+                    user=user,
+                    week_number=week_number,
+                    flow=flow,
+                    gate=gate,
+                    candidate_ids=final_recipe_ids,
+                    search_attempts=runtime_state.search_attempts,
+                    generation_attempts=runtime_state.generation_attempts,
+                    attempt_number=attempt,
+                )
+                if attempt >= MAX_PLAN_GENERATE_ATTEMPTS:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=gate.as_client_detail(
+                            verification_run_id=str(run_id),
+                            attempt_number=attempt,
+                            auto_repair_exhausted=True,
+                        ),
+                    )
+                repair_text = build_repair_intent_suffix(gate.failure_codes())
+                runtime_state.candidate_recipes = []
+                initial_state["messages"] = list(initial_state["messages"]) + [
+                    HumanMessage(content=repair_text)
+                ]
+                initial_state["candidate_recipes"] = []
+                with tracing_context(enabled=TRACING_ENABLED):
+                    final_state = agent.invoke(
+                        initial_state,
+                        config={
+                            "configurable": {"thread_id": thread_id_str},
+                            "recursion_limit": 25,
+                        },
+                    )
+                attempt += 1
+                continue
+
+            response = await persist_verified_plan(
+                db=db,
                 user=user,
-                target_week_number=week_number,
+                week_number=week_number,
                 flow=flow,
+                recipe_ids=final_recipe_ids,
+                recipes=loaded,
                 gate=gate,
-                candidate_ids=final_recipe_ids,
+                plan_service=plan_service,
                 search_attempts=runtime_state.search_attempts,
                 generation_attempts=runtime_state.generation_attempts,
+                attempt_number=attempt,
+                auto_repaired=attempt > 1,
             )
-            db.commit()
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=gate.as_client_detail(verification_run_id=str(run.id)),
-            )
-
-        new_plan = await plan_service.generate_weekly_plan(
-            user=user,
-            week_number=week_number,
-            recipe_ids_from_agent=final_recipe_ids,
-            db=db,
-        )
-        record_plan_verification_run(
-            db,
-            user=user,
-            target_week_number=week_number,
-            flow=flow,
-            gate=gate,
-            candidate_ids=final_recipe_ids,
-            search_attempts=runtime_state.search_attempts,
-            generation_attempts=runtime_state.generation_attempts,
-        )
-        db.commit()
-        print("New plan:", new_plan)
-
-        return new_plan
+            print("New plan:", response.id)
+            return response
 
     except HTTPException:
         raise
@@ -909,53 +933,70 @@ async def generate_next_week_plan(
         if not final_recipe_ids_str:
             raise ValueError("Agent failed to select recipes for next week.")
 
-        final_recipe_ids: List[uuid.UUID] = strs_to_uuids(final_recipe_ids_str)
+        attempt = 1
+        while True:
+            final_recipe_ids: List[uuid.UUID] = strs_to_uuids(
+                runtime_state.candidate_recipes or []
+            )
+            if not final_recipe_ids:
+                raise ValueError("Agent failed to select recipes for next week.")
+            loaded, gate = load_and_verify(db, user, final_recipe_ids)
+            if not gate.ok:
+                run_id = record_failed_attempt(
+                    db,
+                    user=user,
+                    week_number=next_week_number,
+                    flow="next_week",
+                    gate=gate,
+                    candidate_ids=final_recipe_ids,
+                    search_attempts=runtime_state.search_attempts,
+                    generation_attempts=runtime_state.generation_attempts,
+                    attempt_number=attempt,
+                )
+                if attempt >= MAX_PLAN_GENERATE_ATTEMPTS:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=gate.as_client_detail(
+                            verification_run_id=str(run_id),
+                            attempt_number=attempt,
+                            auto_repair_exhausted=True,
+                        ),
+                    )
+                repair_text = build_repair_intent_suffix(gate.failure_codes())
+                runtime_state.candidate_recipes = []
+                initial_state["messages"] = list(initial_state["messages"]) + [
+                    HumanMessage(content=repair_text)
+                ]
+                initial_state["candidate_recipes"] = []
+                with tracing_context(enabled=TRACING_ENABLED):
+                    final_state = agent.invoke(
+                        initial_state,
+                        config={
+                            "configurable": {"thread_id": thread_id_str},
+                            "recursion_limit": 25,
+                        },
+                    )
+                attempt += 1
+                continue
 
-        loaded = (
-            db.query(Recipe).filter(Recipe.id.in_(final_recipe_ids)).all()
-            if final_recipe_ids
-            else []
-        )
-        gate = verify_plan_candidates(user, final_recipe_ids, loaded)
-        if not gate.ok:
-            run = record_plan_verification_run(
-                db,
+            response = await persist_verified_plan(
+                db=db,
                 user=user,
-                target_week_number=next_week_number,
+                week_number=next_week_number,
                 flow="next_week",
+                recipe_ids=final_recipe_ids,
+                recipes=loaded,
                 gate=gate,
-                candidate_ids=final_recipe_ids,
+                plan_service=plan_service,
                 search_attempts=runtime_state.search_attempts,
                 generation_attempts=runtime_state.generation_attempts,
+                attempt_number=attempt,
+                auto_repaired=attempt > 1,
             )
-            db.commit()
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=gate.as_client_detail(verification_run_id=str(run.id)),
+            print(
+                f"[GenerateNextWeek] ✅ Week {next_week_number} generated successfully"
             )
-
-        # Generate the weekly plan (this will create progress entries too)
-        new_plan = await plan_service.generate_weekly_plan(
-            user=user,
-            week_number=next_week_number,
-            recipe_ids_from_agent=final_recipe_ids,
-            db=db,
-        )
-        record_plan_verification_run(
-            db,
-            user=user,
-            target_week_number=next_week_number,
-            flow="next_week",
-            gate=gate,
-            candidate_ids=final_recipe_ids,
-            search_attempts=runtime_state.search_attempts,
-            generation_attempts=runtime_state.generation_attempts,
-        )
-        db.commit()
-
-        print(f"[GenerateNextWeek] ✅ Week {next_week_number} generated successfully")
-
-        return new_plan
+            return response
 
     except HTTPException:
         raise

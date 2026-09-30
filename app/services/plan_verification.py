@@ -54,7 +54,11 @@ class PlanVerificationResult:
         return ordered
 
     def as_client_detail(
-        self, *, verification_run_id: Optional[str] = None
+        self,
+        *,
+        verification_run_id: Optional[str] = None,
+        attempt_number: Optional[int] = None,
+        auto_repair_exhausted: Optional[bool] = None,
     ) -> dict[str, Any]:
         """HTTP-safe detail: codes only, never recipe IDs or names."""
         payload: dict[str, Any] = {
@@ -67,7 +71,23 @@ class PlanVerificationResult:
         }
         if verification_run_id:
             payload["verification_run_id"] = verification_run_id
+        if attempt_number is not None:
+            payload["attempt_number"] = int(attempt_number)
+        if auto_repair_exhausted is not None:
+            payload["auto_repair_exhausted"] = bool(auto_repair_exhausted)
         return payload
+
+
+def build_repair_intent_suffix(failure_codes: list[str]) -> str:
+    """Append-only instruction for a one-shot regenerate after gate failure."""
+    codes = [str(c).strip() for c in failure_codes if str(c).strip()]
+    listed = ", ".join(codes) if codes else "verification_failed"
+    return (
+        "\n\nPrevious plan failed verification "
+        f"({listed}). Select a completely new set of recipes that satisfies "
+        "the user's allergen avoid list, dietary restrictions, meal count, "
+        "and time preferences. Do not reuse the previous failing set."
+    )
 
 
 def _parse_json_list(raw: Optional[str]) -> list[str]:
