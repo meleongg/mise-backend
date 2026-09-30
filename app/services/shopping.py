@@ -17,9 +17,11 @@ from app.models import (
     ShoppingListItem,
     ShoppingListItemSource,
     User,
+    UserPantryItem,
     WeeklyPlan,
     WeeklyPlanEntry,
 )
+from app.services.servings import scale_factor
 from app.services.weekly_plan import ensure_plan_entries
 
 _MEASURE_RE = re.compile(
@@ -111,6 +113,12 @@ def _aggregate_key(normalized_name: str, unit: str) -> str:
     return f"{normalized_name}::{unit}"
 
 
+def _format_qty(quantity: float) -> str:
+    if float(quantity).is_integer():
+        return str(int(quantity))
+    return f"{quantity:.2f}".rstrip("0").rstrip(".")
+
+
 def build_aggregated_items(
     entries: list[WeeklyPlanEntry],
 ) -> list[dict[str, Any]]:
@@ -119,6 +127,8 @@ def build_aggregated_items(
 
     Same normalized name + unit with parseable quantities are summed.
     Differing units for the same name stay separate with needs_review.
+    When selected_servings and snapshot portion_size both parse, quantities
+    are scaled (no unit conversion).
     """
     buckets: dict[str, dict[str, Any]] = {}
     name_units: dict[str, set[str]] = defaultdict(set)
@@ -133,11 +143,36 @@ def build_aggregated_items(
         except json.JSONDecodeError:
             snapshot = {}
         recipe_name = str(snapshot.get("name") or "Recipe")
+        baseline = snapshot.get("portion_size")
+        factor, servings_review, servings_reason = scale_factor(
+            entry.selected_servings, baseline if isinstance(baseline, str) else None
+        )
         for row in _ingredient_rows(snapshot.get("ingredients")):
             name = row["name"]
             measure = row["measure"]
             normalized = _normalize_name(name)
             quantity, unit, ambiguous = parse_measure(measure)
+            source_amount = measure or None
+            review = ambiguous or servings_review
+            reason = None
+            confidence = "high"
+            if ambiguous:
+                confidence = "low"
+                reason = "ambiguous measure"
+            if servings_review:
+                confidence = "low"
+                reason = servings_reason
+            if quantity is not None and factor != 1.0:
+                quantity = float(quantity) * float(factor)
+                if unit:
+                    source_amount = f"{_format_qty(quantity)} {unit}".strip()
+                else:
+                    source_amount = _format_qty(quantity)
+            elif factor != 1.0 and quantity is None and measure:
+                review = True
+                confidence = "low"
+                reason = "servings scale skipped; unparseable measure quantity"
+
             key = _aggregate_key(normalized, unit)
             name_units[normalized].add(unit)
             bucket = buckets.get(key)
@@ -147,28 +182,28 @@ def build_aggregated_items(
                     "display_name": name,
                     "quantity": quantity,
                     "unit": unit or None,
-                    "needs_review": ambiguous,
-                    "confidence": "low" if ambiguous else "high",
-                    "reason": "ambiguous measure" if ambiguous else None,
+                    "needs_review": review,
+                    "confidence": confidence,
+                    "reason": reason,
                     "sources": [
                         {
                             "weekly_plan_entry_id": entry.id,
-                            "source_amount": measure or None,
+                            "source_amount": source_amount,
                             "recipe_name": recipe_name,
                         }
                     ],
-                    "raw_measures": [measure] if measure else [],
+                    "raw_measures": [source_amount] if source_amount else [],
                 }
             else:
                 bucket["sources"].append(
                     {
                         "weekly_plan_entry_id": entry.id,
-                        "source_amount": measure or None,
+                        "source_amount": source_amount,
                         "recipe_name": recipe_name,
                     }
                 )
-                if measure:
-                    bucket["raw_measures"].append(measure)
+                if source_amount:
+                    bucket["raw_measures"].append(source_amount)
                 if quantity is not None and bucket["quantity"] is not None:
                     bucket["quantity"] = float(bucket["quantity"]) + float(quantity)
                 elif quantity is not None and bucket["quantity"] is None:
@@ -180,10 +215,11 @@ def build_aggregated_items(
                     bucket["needs_review"] = True
                     bucket["confidence"] = "medium"
                     bucket["reason"] = "mixed parseable and unparseable measures"
-                if ambiguous:
+                if review:
                     bucket["needs_review"] = True
                     bucket["confidence"] = "low"
-                    bucket["reason"] = "ambiguous measure"
+                    if reason:
+                        bucket["reason"] = reason
 
     # Mark same ingredient with multiple units for review (never convert).
     for bucket in buckets.values():
@@ -221,7 +257,12 @@ def build_aggregated_items(
     return items
 
 
-def serialize_shopping_list(shopping_list: ShoppingList) -> dict[str, Any]:
+def serialize_shopping_list(
+    shopping_list: ShoppingList,
+    *,
+    pantry_names: Optional[set[str]] = None,
+) -> dict[str, Any]:
+    pantry = pantry_names or set()
     items_out = []
     for item in shopping_list.items or []:
         items_out.append(
@@ -236,6 +277,9 @@ def serialize_shopping_list(shopping_list: ShoppingList) -> dict[str, Any]:
                 "is_checked": item.is_checked,
                 "is_user_edit": item.is_user_edit,
                 "needs_review": item.needs_review,
+                "omitted_by_pantry": bool(item.omitted_by_pantry),
+                "pantry_omit_confirmed_at": item.pantry_omit_confirmed_at,
+                "pantry_match": item.normalized_name in pantry,
                 "confidence": item.confidence,
                 "reason": item.reason,
                 "sort_order": item.sort_order,
@@ -266,6 +310,15 @@ def serialize_shopping_list(shopping_list: ShoppingList) -> dict[str, Any]:
         "archived_at": shopping_list.archived_at,
         "items": items_out,
     }
+
+
+def pantry_normalized_names(db: Session, user_id: uuid.UUID) -> set[str]:
+    rows = (
+        db.query(UserPantryItem.name)
+        .filter(UserPantryItem.user_id == user_id)
+        .all()
+    )
+    return {_normalize_name(name) for (name,) in rows if name}
 
 
 def _load_list(db: Session, list_id: uuid.UUID, user_id: uuid.UUID) -> ShoppingList:
@@ -358,6 +411,8 @@ def generate_or_refresh_shopping_list(
                 "quantity": item.quantity,
                 "unit": item.unit,
                 "aisle": item.aisle,
+                "omitted_by_pantry": bool(item.omitted_by_pantry),
+                "pantry_omit_confirmed_at": item.pantry_omit_confirmed_at,
             }
         for item in list(existing.items or []):
             db.delete(item)
@@ -414,6 +469,10 @@ def generate_or_refresh_shopping_list(
             aisle=prior["aisle"] if prior else None,
             is_checked=bool(prior["is_checked"]) if prior else False,
             is_user_edit=bool(prior["is_user_edit"]) if prior else False,
+            omitted_by_pantry=bool(prior["omitted_by_pantry"]) if prior else False,
+            pantry_omit_confirmed_at=(
+                prior["pantry_omit_confirmed_at"] if prior else None
+            ),
             needs_review=row["needs_review"],
             confidence=row["confidence"],
             reason=row["reason"],
@@ -451,6 +510,8 @@ def generate_or_refresh_shopping_list(
                 aisle=prior["aisle"],
                 is_checked=prior["is_checked"],
                 is_user_edit=True,
+                omitted_by_pantry=bool(prior.get("omitted_by_pantry")),
+                pantry_omit_confirmed_at=prior.get("pantry_omit_confirmed_at"),
                 needs_review=False,
                 confidence="high",
                 reason="user-added",
@@ -474,6 +535,8 @@ def update_shopping_list_item(
     display_text: Optional[str] = None,
     quantity: Optional[float] = None,
     unit: Optional[str] = None,
+    omitted_by_pantry: Optional[bool] = None,
+    confirm_pantry_omit: Optional[bool] = None,
 ) -> ShoppingList:
     item = (
         db.query(ShoppingListItem)
@@ -498,7 +561,39 @@ def update_shopping_list_item(
     if unit is not None:
         item.unit = unit.strip() or None
         item.is_user_edit = True
+    if omitted_by_pantry is not None:
+        if omitted_by_pantry and not confirm_pantry_omit:
+            raise HTTPException(
+                status_code=400,
+                detail="confirm_pantry_omit must be true to omit an item via pantry",
+            )
+        item.omitted_by_pantry = omitted_by_pantry
+        item.pantry_omit_confirmed_at = _now() if omitted_by_pantry else None
     item.updated_at = _now()
     item.shopping_list.updated_at = _now()
     db.commit()
     return _load_list(db, item.shopping_list_id, user.id)
+
+
+def update_plan_entry_servings(
+    db: Session, user: User, entry_id: uuid.UUID, selected_servings: Optional[str]
+) -> WeeklyPlanEntry:
+    entry = (
+        db.query(WeeklyPlanEntry)
+        .join(WeeklyPlan, WeeklyPlanEntry.weekly_plan_id == WeeklyPlan.id)
+        .filter(
+            WeeklyPlanEntry.id == entry_id,
+            WeeklyPlan.user_id == user.id,
+        )
+        .first()
+    )
+    if not entry:
+        raise HTTPException(status_code=404, detail="Plan entry not found")
+    cleaned = (selected_servings or "").strip() or None
+    if cleaned is not None and len(cleaned) > 50:
+        raise HTTPException(status_code=422, detail="selected_servings too long")
+    entry.selected_servings = cleaned
+    entry.updated_at = _now()
+    db.commit()
+    db.refresh(entry)
+    return entry

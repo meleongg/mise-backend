@@ -17,6 +17,15 @@ from app.utils.auth import get_current_user
 router = APIRouter()
 
 
+def _list_response(db: Session, user: User, shopping_list) -> ShoppingListResponse:
+    pantry = shopping_service.pantry_normalized_names(db, user.id)
+    return ShoppingListResponse.model_validate(
+        shopping_service.serialize_shopping_list(
+            shopping_list, pantry_names=pantry
+        )
+    )
+
+
 @router.get("/shopping-lists/active", response_model=Optional[ShoppingListResponse])
 def get_active_shopping_list(
     week_number: Optional[int] = Query(None, ge=1),
@@ -28,9 +37,7 @@ def get_active_shopping_list(
     )
     if not shopping_list:
         return None
-    return ShoppingListResponse.model_validate(
-        shopping_service.serialize_shopping_list(shopping_list)
-    )
+    return _list_response(db, current_user, shopping_list)
 
 
 @router.post("/shopping-lists/generate", response_model=ShoppingListResponse)
@@ -42,9 +49,7 @@ def generate_shopping_list(
     shopping_list = shopping_service.generate_or_refresh_shopping_list(
         db, current_user, payload.week_number
     )
-    return ShoppingListResponse.model_validate(
-        shopping_service.serialize_shopping_list(shopping_list)
-    )
+    return _list_response(db, current_user, shopping_list)
 
 
 @router.patch(
@@ -62,6 +67,4 @@ def patch_shopping_list_item(
     shopping_list = shopping_service.update_shopping_list_item(
         db, current_user, item_id, **updates
     )
-    return ShoppingListResponse.model_validate(
-        shopping_service.serialize_shopping_list(shopping_list)
-    )
+    return _list_response(db, current_user, shopping_list)

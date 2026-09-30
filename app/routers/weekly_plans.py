@@ -10,12 +10,14 @@ from app.schemas import (
     WeeklyPlanResponse,
     WeeklyPlanEntryResponse,
     RecipeResponse,
+    UpdatePlanEntryServingsRequest,
 )
 from app.services.weekly_plan import (
     WeeklyPlanService,
     parse_recipe_schedule,
     serialize_plan_entry,
 )
+from app.services import shopping as shopping_service
 
 router = APIRouter()
 plan_service = WeeklyPlanService()
@@ -107,3 +109,20 @@ async def get_all_weekly_plans(
         response_plans.append(plan_response)
 
     return response_plans
+
+
+@router.patch(
+    "/weekly-plan/entries/{entry_id}",
+    response_model=WeeklyPlanEntryResponse,
+)
+def patch_plan_entry_servings(
+    entry_id: UUID,
+    payload: UpdatePlanEntryServingsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update selected_servings on a plan entry without rewriting the snapshot."""
+    entry = shopping_service.update_plan_entry_servings(
+        db, current_user, entry_id, payload.selected_servings
+    )
+    return WeeklyPlanEntryResponse.model_validate(serialize_plan_entry(entry))
