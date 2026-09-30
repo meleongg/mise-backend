@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.models import Recipe, User
 from app.schemas import GenerationSummary, WeeklyPlanResponse
 from app.services.plan_evaluator import evaluate_plan_candidates
+from app.services.plan_timeline_attach import attach_prep_timeline
 from app.services.plan_verification import PlanVerificationResult, verify_plan_candidates
 from app.services.plan_verification_runs import record_plan_verification_run
 from app.services.weekly_plan import WeeklyPlanService
@@ -98,5 +99,8 @@ async def persist_verified_plan(
             attempt_number=attempt_number,
             auto_repaired=auto_repaired,
         )
+    )
+    attach_prep_timeline(
+        response, user, recipes, ordered_recipe_ids=list(recipe_ids)
     )
     return response

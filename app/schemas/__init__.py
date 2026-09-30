@@ -354,6 +354,23 @@ class GenerationSummary(BaseModel):
     confidence_reasons: List[str] = []
 
 
+class PrepTimelineItemResponse(BaseModel):
+    kind: str  # shop | advance_prep | cook
+    title: str
+    detail: str
+    day_label: str
+    duration_minutes: Optional[int] = None
+    recipe_id: Optional[str] = None
+    reasons: List[str] = []
+
+
+class PrepTimelineResponse(BaseModel):
+    kind: str = "deterministic_v1"
+    total_active_minutes: int = 0
+    notes: List[str] = []
+    items: List[PrepTimelineItemResponse] = []
+
+
 class WeeklyPlanResponse(BaseModel):
     id: UUID
     user_id: UUID
@@ -365,6 +382,7 @@ class WeeklyPlanResponse(BaseModel):
     entries: List[WeeklyPlanEntryResponse] = []
     swap_count: int = 0
     generation_summary: Optional[GenerationSummary] = None
+    prep_timeline: Optional[PrepTimelineResponse] = None
 
     model_config = {"from_attributes": True}
 
