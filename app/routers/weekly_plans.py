@@ -18,6 +18,7 @@ from app.services.weekly_plan import (
     serialize_plan_entry,
 )
 from app.services import shopping as shopping_service
+from app.services.plan_timeline_attach import attach_prep_timeline
 
 router = APIRouter()
 plan_service = WeeklyPlanService()
@@ -75,6 +76,7 @@ async def get_weekly_plan(
         WeeklyPlanEntryResponse.model_validate(serialize_plan_entry(entry))
         for entry in getattr(plan, "entries", []) or []
     ]
+    attach_prep_timeline(plan_response, user, plan.recipes)
 
     return plan_response
 
@@ -106,6 +108,7 @@ async def get_all_weekly_plans(
             WeeklyPlanEntryResponse.model_validate(serialize_plan_entry(entry))
             for entry in getattr(plan, "entries", []) or []
         ]
+        attach_prep_timeline(plan_response, user, plan.recipes)
         response_plans.append(plan_response)
 
     return response_plans
