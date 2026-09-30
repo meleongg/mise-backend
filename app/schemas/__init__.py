@@ -151,6 +151,13 @@ class SodieThreadCreate(BaseModel):
     is_temporary: bool = False
 
 
+class SodieKitchenTimer(BaseModel):
+    """Client-reported countdown for kitchen coach context."""
+
+    label: str = Field(..., min_length=1, max_length=80)
+    remaining_seconds: int = Field(..., ge=0, le=24 * 60 * 60)
+
+
 class SodieKitchenState(BaseModel):
     """Live Kitchen Mode progress for coach prompts (not persisted)."""
 
@@ -159,6 +166,7 @@ class SodieKitchenState(BaseModel):
     current_step_text: Optional[str] = Field(None, max_length=500)
     checked_ingredients: int = Field(0, ge=0, le=500)
     total_ingredients: int = Field(0, ge=0, le=500)
+    active_timers: List[SodieKitchenTimer] = Field(default_factory=list, max_length=8)
 
 
 class SodieMessageCreate(BaseModel):

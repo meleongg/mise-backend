@@ -116,6 +116,37 @@ def test_kitchen_live_state_appended_only_for_kitchen_scope(
     assert "Prefer concise help" in live
 
 
+def test_kitchen_live_state_includes_active_timers(db, test_user, test_recipes):
+    from app.services.sodie_chat_context import format_kitchen_live_state
+
+    recipe = test_recipes[0]
+    state = {
+        "current_step_index": 0,
+        "total_steps": 2,
+        "current_step_text": "Simmer for 10 minutes.",
+        "checked_ingredients": 0,
+        "total_ingredients": 2,
+        "active_timers": [
+            {"label": "Simmer", "remaining_seconds": 605},
+            {"label": "Rest dough", "remaining_seconds": 90},
+        ],
+    }
+    text = build_sodie_prompt_context(
+        db,
+        test_user,
+        scope="kitchen",
+        context_id=str(recipe.id),
+        kitchen_state=state,
+    )
+    assert "Active timers:" in text
+    assert "Simmer: 10m 05s remaining" in text
+    assert "Rest dough: 1m 30s remaining" in text
+    assert "Do not invent additional timers" in text
+
+    live = format_kitchen_live_state(state)
+    assert "Prefer concise help" not in live
+
+
 def test_settings_scope_omits_profile_and_plan(db, test_user, test_plan):
     text = build_sodie_prompt_context(db, test_user, scope="settings")
     assert "ACTIVE PAGE: settings" in text

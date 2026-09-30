@@ -544,10 +544,38 @@ def format_kitchen_live_state(kitchen_state: Optional[Any]) -> str:
         lines.append(
             f"- Mise en place checked: {checked} of {ing_total} ingredients"
         )
-    lines.append(
-        "- Prefer concise help for this active step. Do not invent timers "
-        "or silent recipe edits."
-    )
+
+    timers = data.get("active_timers") or []
+    timer_lines: list[str] = []
+    if isinstance(timers, list):
+        for item in timers[:8]:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or "").strip()
+            if not label:
+                continue
+            if len(label) > 80:
+                label = label[:80].rstrip() + "…"
+            try:
+                remaining = int(item.get("remaining_seconds", 0))
+            except (TypeError, ValueError):
+                continue
+            if remaining < 0:
+                remaining = 0
+            mins, secs = divmod(remaining, 60)
+            timer_lines.append(f"  - {label}: {mins}m {secs:02d}s remaining")
+    if timer_lines:
+        lines.append("- Active timers:")
+        lines.extend(timer_lines)
+        lines.append(
+            "- You may reference these listed timers. Do not invent additional "
+            "timers or silent recipe edits."
+        )
+    else:
+        lines.append(
+            "- Prefer concise help for this active step. Do not invent timers "
+            "or silent recipe edits."
+        )
     return "\n".join(lines) + "\n"
 
 
