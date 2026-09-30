@@ -369,6 +369,8 @@ class PrepTimelineResponse(BaseModel):
     total_active_minutes: int = 0
     notes: List[str] = []
     items: List[PrepTimelineItemResponse] = []
+    source: Optional[str] = None  # snapshot | computed
+    snapshotted_at: Optional[datetime] = None
 
 
 class WeeklyPlanResponse(BaseModel):

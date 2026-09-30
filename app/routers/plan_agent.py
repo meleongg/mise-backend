@@ -49,6 +49,7 @@ from app.services.plan_generate_verified import (
     persist_verified_plan,
     record_failed_attempt,
 )
+from app.services.plan_timeline_attach import rebuild_and_save_prep_timeline
 from app.utils.uuid_helpers import uuids_to_strs, strs_to_uuids
 from app.utils.prompt_helpers import get_goal_description, get_skill_description
 from app.utils.auth import get_current_user, require_same_user
@@ -413,6 +414,22 @@ The backend will handle inserting it into the meal plan."""
             print(f"[SwapRecipe] Incremented swap_count to {target_plan.swap_count}")
 
             sync_plan_entries_from_schedule(target_plan, db)
+
+            # Refresh prep timeline snapshot for the new schedule
+            ordered_ids = [
+                uuid.UUID(rid) for rid in parse_recipe_schedule(updated_schedule_json)
+            ]
+            swapped_recipes = (
+                db.query(Recipe).filter(Recipe.id.in_(ordered_ids)).all()
+                if ordered_ids
+                else []
+            )
+            rebuild_and_save_prep_timeline(
+                target_plan,
+                user,
+                swapped_recipes,
+                ordered_recipe_ids=ordered_ids,
+            )
 
             db.commit()
             db.refresh(target_plan)
