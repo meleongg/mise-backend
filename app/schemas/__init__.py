@@ -456,6 +456,9 @@ class ShoppingListItemResponse(BaseModel):
     is_checked: bool = False
     is_user_edit: bool = False
     needs_review: bool = False
+    omitted_by_pantry: bool = False
+    pantry_omit_confirmed_at: Optional[datetime] = None
+    pantry_match: bool = False
     confidence: Optional[str] = None
     reason: Optional[str] = None
     sort_order: int = 0
@@ -491,3 +494,9 @@ class UpdateShoppingListItemRequest(BaseModel):
     display_text: Optional[str] = Field(None, min_length=1, max_length=300)
     quantity: Optional[float] = None
     unit: Optional[str] = Field(None, max_length=50)
+    omitted_by_pantry: Optional[bool] = None
+    confirm_pantry_omit: Optional[bool] = None
+
+
+class UpdatePlanEntryServingsRequest(BaseModel):
+    selected_servings: Optional[str] = Field(None, max_length=50)

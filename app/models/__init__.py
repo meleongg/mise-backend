@@ -393,6 +393,8 @@ class ShoppingListItem(Base):
     is_checked = Column(Boolean, nullable=False, default=False)
     is_user_edit = Column(Boolean, nullable=False, default=False)
     needs_review = Column(Boolean, nullable=False, default=False)
+    omitted_by_pantry = Column(Boolean, nullable=False, default=False)
+    pantry_omit_confirmed_at = Column(DateTime, nullable=True)
     confidence = Column(String(20), nullable=True)  # high, medium, low
     reason = Column(Text, nullable=True)
     sort_order = Column(Integer, nullable=False, default=0)
