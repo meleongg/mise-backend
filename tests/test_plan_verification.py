@@ -69,6 +69,10 @@ def test_allergen_conflict_hard_fails():
     assert "failures" in detail
     # Do not leak recipe names in the top-level message.
     assert "Safe Pasta" not in detail["message"]
+    client = result.as_client_detail()
+    assert "failures" not in client
+    assert "recipe_id" not in json.dumps(client)
+    assert "allergen_conflict" in client["failure_codes"]
 
 
 def test_missing_allergen_metadata_fails_when_user_has_allergens():
