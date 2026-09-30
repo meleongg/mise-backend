@@ -210,6 +210,9 @@ class WeeklyPlan(Base):
     swap_count = Column(Integer, default=0)  # Number of swaps used this week (max 3)
     generated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     is_unlocked = Column(Boolean, default=False)
+    prep_timeline_json = Column(
+        Text, nullable=True
+    )  # JSON snapshot of deterministic prep timeline
 
     # Relationships
     user = relationship("User", back_populates="weekly_plans")

@@ -76,7 +76,18 @@ async def get_weekly_plan(
         WeeklyPlanEntryResponse.model_validate(serialize_plan_entry(entry))
         for entry in getattr(plan, "entries", []) or []
     ]
-    attach_prep_timeline(plan_response, user, plan.recipes)
+    before_timeline = getattr(plan, "prep_timeline_json", None)
+    attach_prep_timeline(
+        plan_response,
+        user,
+        plan.recipes,
+        plan=plan,
+        prefer_snapshot=True,
+        persist_if_missing=True,
+    )
+    if before_timeline != getattr(plan, "prep_timeline_json", None):
+        db.add(plan)
+        db.commit()
 
     return plan_response
 
@@ -97,6 +108,7 @@ async def get_all_weekly_plans(
 
     # Add recipe details to each plan
     response_plans = []
+    dirty = False
     for plan in plans:
         plan = plan_service.load_recipes_for_plan(plan, db)
 
@@ -108,8 +120,22 @@ async def get_all_weekly_plans(
             WeeklyPlanEntryResponse.model_validate(serialize_plan_entry(entry))
             for entry in getattr(plan, "entries", []) or []
         ]
-        attach_prep_timeline(plan_response, user, plan.recipes)
+        before = getattr(plan, "prep_timeline_json", None)
+        attach_prep_timeline(
+            plan_response,
+            user,
+            plan.recipes,
+            plan=plan,
+            prefer_snapshot=True,
+            persist_if_missing=True,
+        )
+        if getattr(plan, "prep_timeline_json", None) != before:
+            dirty = True
+            db.add(plan)
         response_plans.append(plan_response)
+
+    if dirty:
+        db.commit()
 
     return response_plans
 
