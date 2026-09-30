@@ -170,6 +170,59 @@ def test_analytics_scope_snapshot_uses_progress(
     assert "do not invent" in text.lower() or "Do not invent" in text
 
 
+def test_shopping_scope_returns_plan_week_not_list_id(
+    client, db, test_user, test_recipes, test_plan
+):
+    """Regression: shopping authorize must not pass list UUID as week_number."""
+    import json
+    import uuid
+    from datetime import datetime, timezone
+
+    from app.models import WeeklyPlanEntry
+    from app.services.sodie_chat_context import authorize_page_context
+    from app.services.weekly_plan import create_recipe_schedule
+
+    test_plan.recipe_schedule = create_recipe_schedule([str(test_recipes[0].id)])
+    db.add(
+        WeeklyPlanEntry(
+            id=uuid.uuid4(),
+            weekly_plan_id=test_plan.id,
+            position=0,
+            catalog_recipe_id=test_recipes[0].id,
+            recipe_snapshot=json.dumps(
+                {
+                    "id": str(test_recipes[0].id),
+                    "name": test_recipes[0].name,
+                    "ingredients": [{"name": "Onion", "measure": "1 cup"}],
+                }
+            ),
+            lifecycle_state="planned",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    db.flush()
+
+    generated = client.post(
+        "/api/shopping-lists/generate",
+        json={"week_number": test_plan.week_number},
+    )
+    assert generated.status_code == 200
+    list_id = generated.json()["id"]
+
+    snapshot, week = authorize_page_context(db, test_user, "shopping", None)
+    assert "ACTIVE PAGE: shopping" in snapshot
+    assert "Onion" in snapshot or "onion" in snapshot.lower()
+    assert week == test_plan.week_number
+    assert week != list_id
+    assert not isinstance(week, str)
+
+    # Must not raise ProgrammingError when building full prompt context
+    text = build_sodie_prompt_context(db, test_user, scope="shopping")
+    assert "ACTIVE PAGE: shopping" in text
+    assert "USER PROFILE:" in text
+
+
 @patch("app.routers.sodie.ensure_user_text_allowed")
 @patch("app.routers.sodie.invoke_chat_model")
 def test_sodie_chat_includes_context_in_prompt(

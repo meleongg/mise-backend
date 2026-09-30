@@ -89,7 +89,7 @@ def test_approve_creates_personal_lineage_without_mutating_catalog(
     assert created.status_code == 200
     proposal_id = created.json()["proposal"]["id"]
     assert created.json()["proposal"]["status"] == "pending"
-    assert created.json()["proposal"]["impact"]["shopping_list"] == "unchanged until weekly_plan_entries"
+    assert created.json()["proposal"]["impact"]["shopping_list"] == "unchanged until shopping reconciliation"
     assert created.json()["proposal"]["impact"]["list_reconciliation_queued"] is False
 
     approved = client.post(f"/api/sodie/proposals/{proposal_id}/approve")
@@ -929,4 +929,4 @@ def test_from_request_stores_allergen_safety_on_proposal(
     assert impact["allergen_conflict"] is True
     assert "peanut" in (impact.get("safety_notes") or "").lower()
     assert impact["plan_schedule"] == "unchanged until weekly_plan_entries"
-    assert impact["shopping_list"] == "unchanged until weekly_plan_entries"
+    assert impact["shopping_list"] == "unchanged until shopping reconciliation"
