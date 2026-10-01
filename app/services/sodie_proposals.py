@@ -114,14 +114,14 @@ def build_impact_preview(
     safety_notes: str | None = None,
     confidence: str | None = None,
 ) -> Dict[str, Any]:
-    """Shopping/plan entry impact is deferred until weekly_plan_entries lands."""
+    """Impact preview for recipe-edit proposals (plan bind happens on approve)."""
     impact: Dict[str, Any] = {
         "serving_text": (
             "Personal copy servings update on approve; catalog recipe unchanged"
         ),
-        "plan_schedule": "unchanged until weekly_plan_entries",
-        "shopping_list": "unchanged until shopping reconciliation",
-        "list_reconciliation_queued": False,
+        "plan_schedule": "binds personal copy onto matching plan entries on approve",
+        "shopping_list": "refreshed after approve when a list exists for that week",
+        "list_reconciliation_queued": True,
         "allergen_conflict": bool(allergen_conflict),
         "diet_conflict": bool(diet_conflict),
     }
@@ -350,6 +350,52 @@ def apply_recipe_edit(db: Session, user: User, proposal_id: UUID) -> SodieAction
         created_at=now,
     )
     db.add(revision)
+
+    from app.services.shopping import generate_or_refresh_shopping_list
+    from app.services.weekly_plan import bind_personal_recipe_to_active_entries
+
+    bind_result = bind_personal_recipe_to_active_entries(
+        db, user, personal, recipe.id
+    )
+    shopping_weeks: list[int] = []
+    for week_number in bind_result.get("weeks") or []:
+        try:
+            generate_or_refresh_shopping_list(db, user, int(week_number))
+            shopping_weeks.append(int(week_number))
+        except Exception:
+            logger.exception(
+                "Shopping refresh after personal bind failed (week=%s)", week_number
+            )
+
+    bound_count = int(bind_result.get("bound_count") or 0)
+    primary_week = bind_result.get("primary_week")
+    if bound_count > 0 and primary_week is not None:
+        plan_schedule = (
+            f"bound personal copy on {bound_count} plan entr"
+            f"{'y' if bound_count == 1 else 'ies'} (week {primary_week}"
+            f"{'+' if bound_count > 1 else ''})"
+        )
+    else:
+        plan_schedule = "no matching unlocked plan entry — personal copy saved only"
+
+    proposal.impact_json = _json_dumps(
+        {
+            "serving_text": (
+                "Personal copy servings updated; catalog recipe unchanged"
+            ),
+            "plan_schedule": plan_schedule,
+            "shopping_list": (
+                f"refreshed for week(s) {', '.join(str(w) for w in shopping_weeks)}"
+                if shopping_weeks
+                else "unchanged (no list refresh)"
+            ),
+            "list_reconciliation_queued": bool(shopping_weeks),
+            "bound_count": bound_count,
+            "bound_entry_ids": bind_result.get("bound_entry_ids") or [],
+            "weeks": bind_result.get("weeks") or [],
+            "week_number": primary_week,
+        }
+    )
 
     proposal.status = "applied"
     proposal.personal_recipe_id = personal.id

@@ -89,14 +89,16 @@ def test_approve_creates_personal_lineage_without_mutating_catalog(
     assert created.status_code == 200
     proposal_id = created.json()["proposal"]["id"]
     assert created.json()["proposal"]["status"] == "pending"
-    assert created.json()["proposal"]["impact"]["shopping_list"] == "unchanged until shopping reconciliation"
-    assert created.json()["proposal"]["impact"]["list_reconciliation_queued"] is False
+    assert "binds personal copy" in created.json()["proposal"]["impact"]["plan_schedule"]
+    assert created.json()["proposal"]["impact"]["list_reconciliation_queued"] is True
 
     approved = client.post(f"/api/sodie/proposals/{proposal_id}/approve")
     assert approved.status_code == 200
     body = approved.json()
     assert body["status"] == "applied"
     assert body["personal_recipe_id"] is not None
+    assert body["impact"]["bound_count"] == 0
+    assert "no matching unlocked plan entry" in body["impact"]["plan_schedule"]
 
     db.refresh(recipe)
     assert recipe.name == original_name
@@ -118,6 +120,45 @@ def test_approve_creates_personal_lineage_without_mutating_catalog(
     assert listed.status_code == 200
     assert len(listed.json()) == 1
     assert listed.json()[0]["name"] == "Spicy Pasta"
+
+
+def test_approve_binds_personal_copy_to_matching_plan_entry(
+    client, db: Session, test_user: User, test_recipes: list, test_plan
+):
+    from app.models import WeeklyPlanEntry
+    from app.services.weekly_plan import ensure_plan_entries, parse_recipe_schedule
+
+    recipe = test_recipes[0]
+    assert str(recipe.id) in parse_recipe_schedule(test_plan.recipe_schedule)
+    ensure_plan_entries(test_plan, db)
+    db.flush()
+
+    proposal_id = client.post(
+        "/api/sodie/proposals",
+        json=_propose_body(str(recipe.id), key="bind-entry-1", title="Plan-bound Pasta"),
+    ).json()["proposal"]["id"]
+    approved = client.post(f"/api/sodie/proposals/{proposal_id}/approve")
+    assert approved.status_code == 200
+    body = approved.json()
+    assert body["impact"]["bound_count"] == 1
+    assert body["impact"]["week_number"] == test_plan.week_number
+    assert "bound personal copy" in body["impact"]["plan_schedule"]
+
+    entry = (
+        db.query(WeeklyPlanEntry)
+        .filter(
+            WeeklyPlanEntry.weekly_plan_id == test_plan.id,
+            WeeklyPlanEntry.catalog_recipe_id == recipe.id,
+        )
+        .one()
+    )
+    assert str(entry.personal_recipe_id) == body["personal_recipe_id"]
+    snapshot = json.loads(entry.recipe_snapshot)
+    assert snapshot["name"] == "Plan-bound Pasta"
+    assert snapshot["personal_recipe_id"] == body["personal_recipe_id"]
+
+    db.refresh(recipe)
+    assert recipe.name == "Test Recipe 0"
 
 
 def test_reject_leaves_catalog_and_personal_recipes_unchanged(
@@ -1182,5 +1223,5 @@ def test_from_request_stores_allergen_safety_on_proposal(
     impact = body["proposal"]["impact"]
     assert impact["allergen_conflict"] is True
     assert "peanut" in (impact.get("safety_notes") or "").lower()
-    assert impact["plan_schedule"] == "unchanged until weekly_plan_entries"
-    assert impact["shopping_list"] == "unchanged until shopping reconciliation"
+    assert "binds personal copy" in impact["plan_schedule"]
+    assert impact["list_reconciliation_queued"] is True

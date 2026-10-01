@@ -9,6 +9,7 @@ from app.models import (
     UserRecipeProgress,
     Recipe,
     RecipeSuggestion,
+    PersonalRecipe,
 )
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import select
@@ -158,6 +159,101 @@ def ensure_plan_entries(plan: WeeklyPlan, db: Session) -> list[WeeklyPlanEntry]:
     if existing:
         return existing
     return sync_plan_entries_from_schedule(plan, db)
+
+
+def _personal_entry_snapshot(personal: PersonalRecipe, catalog: Recipe | None) -> str:
+    """Snapshot for a plan entry bound to a personal recipe copy."""
+    ingredients = personal.ingredients
+    try:
+        ingredients = json.loads(personal.ingredients) if personal.ingredients else []
+    except (TypeError, json.JSONDecodeError):
+        ingredients = personal.ingredients
+
+    instructions = personal.instructions
+    try:
+        instructions = (
+            json.loads(personal.instructions) if personal.instructions else []
+        )
+    except (TypeError, json.JSONDecodeError):
+        instructions = personal.instructions
+
+    meta: dict = {}
+    try:
+        meta = json.loads(personal.metadata_json) if personal.metadata_json else {}
+    except (TypeError, json.JSONDecodeError):
+        meta = {}
+
+    return json.dumps(
+        {
+            "id": str(
+                personal.source_recipe_id or (catalog.id if catalog else personal.id)
+            ),
+            "personal_recipe_id": str(personal.id),
+            "name": personal.name,
+            "cuisine": getattr(catalog, "cuisine", None) or meta.get("cuisine"),
+            "difficulty": getattr(catalog, "difficulty", None)
+            or meta.get("difficulty"),
+            "ingredients": ingredients,
+            "instructions": instructions,
+            "prep_time_minutes": getattr(catalog, "prep_time_minutes", None),
+            "cook_time_minutes": getattr(catalog, "cook_time_minutes", None),
+            "portion_size": personal.portion_size,
+            "notes": personal.notes,
+            "image_url": getattr(catalog, "image_url", None),
+        },
+        default=str,
+    )
+
+
+def bind_personal_recipe_to_active_entries(
+    db: Session,
+    user: User,
+    personal: PersonalRecipe,
+    catalog_recipe_id: uuid.UUID,
+) -> dict:
+    """Bind personal copy onto matching unlocked-plan entries for this catalog id."""
+    catalog = db.query(Recipe).filter(Recipe.id == catalog_recipe_id).first()
+    plans = (
+        db.query(WeeklyPlan)
+        .filter(
+            WeeklyPlan.user_id == user.id,
+            WeeklyPlan.is_unlocked.is_(True),
+        )
+        .order_by(WeeklyPlan.week_number.desc())
+        .all()
+    )
+    now = datetime.now(timezone.utc)
+    bound_weeks: list[int] = []
+    bound_entry_ids: list[str] = []
+    snapshot = _personal_entry_snapshot(personal, catalog)
+
+    for plan in plans:
+        ensure_plan_entries(plan, db)
+        entries = (
+            db.query(WeeklyPlanEntry)
+            .filter(
+                WeeklyPlanEntry.weekly_plan_id == plan.id,
+                WeeklyPlanEntry.catalog_recipe_id == catalog_recipe_id,
+            )
+            .all()
+        )
+        if not entries:
+            continue
+        for entry in entries:
+            entry.personal_recipe_id = personal.id
+            entry.recipe_snapshot = snapshot
+            if personal.portion_size:
+                entry.selected_servings = personal.portion_size
+            entry.updated_at = now
+            bound_entry_ids.append(str(entry.id))
+        bound_weeks.append(int(plan.week_number))
+
+    return {
+        "bound_count": len(bound_entry_ids),
+        "bound_entry_ids": bound_entry_ids,
+        "weeks": bound_weeks,
+        "primary_week": bound_weeks[0] if bound_weeks else None,
+    }
 
 
 def get_active_unlocked_plan(db: Session, user: User) -> WeeklyPlan | None:
