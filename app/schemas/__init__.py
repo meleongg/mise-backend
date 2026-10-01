@@ -331,6 +331,10 @@ class RecipeResponse(BaseModel):
     cook_time_minutes: Optional[int] = None
     skill_level_validated: Optional[str] = None
     created_at: datetime
+    # Effective view when week_number selects a personally bound plan entry.
+    content_source: Optional[str] = None  # catalog | plan_entry_personal
+    personal_recipe_id: Optional[UUID] = None
+    plan_entry_id: Optional[UUID] = None
 
     model_config = {"from_attributes": True}
 
