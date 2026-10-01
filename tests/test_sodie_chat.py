@@ -145,6 +145,34 @@ def test_kitchen_live_state_includes_active_timers(db, test_user, test_recipes):
 
     live = format_kitchen_live_state(state)
     assert "Prefer concise help" not in live
+    assert "on-device read-aloud" in live.lower()
+
+
+def test_kitchen_live_state_read_aloud_active_flag(db, test_user, test_recipes):
+    from app.services.sodie_chat_context import format_kitchen_live_state
+
+    recipe = test_recipes[0]
+    state = {
+        "current_step_index": 0,
+        "total_steps": 1,
+        "current_step_text": "Stir the pot.",
+        "checked_ingredients": 0,
+        "total_ingredients": 0,
+        "active_timers": [],
+        "read_aloud_active": True,
+    }
+    text = build_sodie_prompt_context(
+        db,
+        test_user,
+        scope="kitchen",
+        context_id=str(recipe.id),
+        kitchen_state=state,
+    )
+    assert "read-aloud is playing" in text.lower()
+    assert "Do not claim you are speaking aloud" in text
+
+    live = format_kitchen_live_state({**state, "read_aloud_active": False})
+    assert "can use on-device read-aloud" in live.lower()
 
 
 def test_settings_scope_omits_profile_and_plan(db, test_user, test_plan):

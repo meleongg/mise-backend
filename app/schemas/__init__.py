@@ -167,6 +167,7 @@ class SodieKitchenState(BaseModel):
     checked_ingredients: int = Field(0, ge=0, le=500)
     total_ingredients: int = Field(0, ge=0, le=500)
     active_timers: List[SodieKitchenTimer] = Field(default_factory=list, max_length=8)
+    read_aloud_active: bool = False
 
 
 class SodieMessageCreate(BaseModel):
