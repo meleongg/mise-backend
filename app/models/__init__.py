@@ -170,6 +170,8 @@ class Recipe(Base):
     difficulty = Column(String(20), nullable=False)  # easy, medium, hard
     tags = Column(Text)  # JSON string of tags
     image_url = Column(String(500))
+    image_attribution_photographer = Column(String(200), nullable=True)
+    image_attribution_url = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships

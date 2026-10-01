@@ -316,7 +316,7 @@ class AccessTokenResponse(BaseModel):
 # Recipe schemas
 class RecipeResponse(BaseModel):
     id: UUID
-    external_id: str
+    external_id: Optional[str] = None
     name: str
     cuisine: str
     ingredients: str
@@ -324,6 +324,8 @@ class RecipeResponse(BaseModel):
     difficulty: str
     tags: Optional[str]
     image_url: Optional[str]
+    image_attribution_photographer: Optional[str] = None
+    image_attribution_url: Optional[str] = None
     dietary_tags: Optional[str] = None
     allergens: Optional[str] = None
     portion_size: Optional[float] = None

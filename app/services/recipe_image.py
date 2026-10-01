@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+from dataclasses import dataclass
 from typing import Any, List, Optional
 from urllib.parse import urlparse
 
@@ -23,6 +24,13 @@ PEXELS_SEARCH_URL = "https://api.pexels.com/v1/search"
 PEXELS_IMAGE_HOST = "images.pexels.com"
 DEFAULT_PER_PAGE = 5
 REQUEST_TIMEOUT_SEC = 8.0
+
+
+@dataclass(frozen=True)
+class ResolvedPexelsImage:
+    url: str
+    photographer: Optional[str] = None
+    attribution_url: Optional[str] = None
 
 # Strip marketing/skill prefixes from legacy AI names when searching Pexels.
 _MARKETING_PREFIX_RE = re.compile(
@@ -308,11 +316,11 @@ def _is_allowed_pexels_url(url: str) -> bool:
     return parsed.scheme == "https" and parsed.netloc == PEXELS_IMAGE_HOST
 
 
-def _pick_photo_url(
+def _pick_photo(
     photos: List[dict[str, Any]],
     recipe_name: str,
     dietary_tags: Optional[List[str]] = None,
-) -> Optional[str]:
+) -> Optional[ResolvedPexelsImage]:
     if not photos:
         return None
 
@@ -344,16 +352,34 @@ def _pick_photo_url(
 
     src = best.get("src") or {}
     url = src.get("large") or src.get("medium") or src.get("original")
-    if isinstance(url, str) and _is_allowed_pexels_url(url):
-        photographer = best.get("photographer") or "Unknown"
-        logger.info(
-            "Pexels image selected id=%s photographer=%s score=%s",
-            best.get("id"),
-            photographer,
-            best_score,
-        )
-        return url
-    return None
+    if not (isinstance(url, str) and _is_allowed_pexels_url(url)):
+        return None
+
+    photographer = best.get("photographer")
+    if photographer is not None:
+        photographer = str(photographer).strip() or None
+    page_url = best.get("url") or best.get("photographer_url")
+    if page_url is not None:
+        page_url = str(page_url).strip() or None
+    logger.info(
+        "Pexels image selected id=%s photographer=%s score=%s",
+        best.get("id"),
+        photographer or "Unknown",
+        best_score,
+    )
+    return ResolvedPexelsImage(
+        url=url, photographer=photographer, attribution_url=page_url
+    )
+
+
+def _pick_photo_url(
+    photos: List[dict[str, Any]],
+    recipe_name: str,
+    dietary_tags: Optional[List[str]] = None,
+) -> Optional[str]:
+    """Backward-compatible helper used by tests."""
+    resolved = _pick_photo(photos, recipe_name, dietary_tags)
+    return resolved.url if resolved else None
 
 
 def _search_pexels(query: str, api_key: str) -> List[dict[str, Any]]:
@@ -373,9 +399,9 @@ def _search_pexels(query: str, api_key: str) -> List[dict[str, Any]]:
 
 def resolve_recipe_image(
     recipe: Recipe, *, user_dietary_restrictions: Optional[List[str]] = None
-) -> Optional[str]:
+) -> Optional[ResolvedPexelsImage]:
     """
-    Return a Pexels CDN URL for the recipe, or None if disabled / not found.
+    Return Pexels CDN URL + attribution for the recipe, or None if disabled / not found.
     """
     if not pexels_enabled():
         logger.debug("Pexels disabled or missing API key")
@@ -397,15 +423,15 @@ def resolve_recipe_image(
             )
             continue
 
-        url = _pick_photo_url(photos, recipe_name, dietary_tags)
-        if url:
+        resolved = _pick_photo(photos, recipe_name, dietary_tags)
+        if resolved:
             logger.info(
                 "Resolved image recipe_id=%s query=%r url=%s",
                 recipe.id,
                 query,
-                url,
+                resolved.url,
             )
-            return url
+            return resolved
 
     logger.info("No Pexels image for recipe_id=%s name=%r", recipe.id, recipe_name)
     return None
@@ -419,7 +445,7 @@ def attach_recipe_image(
     user_dietary_restrictions: Optional[List[str]] = None,
 ) -> Optional[str]:
     """
-    Set recipe.image_url from Pexels.
+    Set recipe.image_url and attribution fields from Pexels.
 
     When force=False, skips rows that already have image_url.
     When force=True, re-resolves and overwrites on success; keeps existing URL if
@@ -429,15 +455,17 @@ def attach_recipe_image(
         return recipe.image_url
 
     previous = recipe.image_url
-    url = resolve_recipe_image(
+    resolved = resolve_recipe_image(
         recipe, user_dietary_restrictions=user_dietary_restrictions
     )
-    if url:
-        recipe.image_url = url
+    if resolved:
+        recipe.image_url = resolved.url
+        recipe.image_attribution_photographer = resolved.photographer
+        recipe.image_attribution_url = resolved.attribution_url
         db.add(recipe)
         db.commit()
         db.refresh(recipe)
-        return url
+        return resolved.url
 
     return previous if force and previous else None
 

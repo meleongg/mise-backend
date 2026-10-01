@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from app.models import Recipe
+from app.services.recipe_image import ResolvedPexelsImage
 from app.services import recipe_image as ri
 
 
@@ -166,8 +167,9 @@ def test_resolve_uses_dietary_query(mock_search, monkeypatch):
             "src": {"large": "https://images.pexels.com/photos/3/large.jpg"},
         },
     ]
-    url = ri.resolve_recipe_image(recipe, user_dietary_restrictions=["vegetarian"])
-    assert url == "https://images.pexels.com/photos/3/large.jpg"
+    resolved = ri.resolve_recipe_image(recipe, user_dietary_restrictions=["vegetarian"])
+    assert resolved is not None
+    assert resolved.url == "https://images.pexels.com/photos/3/large.jpg"
     assert mock_search.call_args_list[0][0][0].startswith("vegetarian ")
 
 
@@ -190,14 +192,15 @@ def test_resolve_tries_fallback_query(mock_search, monkeypatch, sample_recipe):
         ],
     ]
 
-    url = ri.resolve_recipe_image(sample_recipe)
-    assert url == "https://images.pexels.com/photos/9/large.jpg"
+    resolved = ri.resolve_recipe_image(sample_recipe)
+    assert resolved is not None
+    assert resolved.url == "https://images.pexels.com/photos/9/large.jpg"
     assert mock_search.call_count == 2
 
 
 @patch("app.services.recipe_image.resolve_recipe_image")
 def test_attach_image_if_missing_updates_row(mock_resolve):
-    mock_resolve.return_value = "https://images.pexels.com/photos/1/large.jpg"
+    mock_resolve.return_value = ResolvedPexelsImage(url="https://images.pexels.com/photos/1/large.jpg", photographer="Ada", attribution_url="https://www.pexels.com/photo/1/")
     recipe = Recipe(
         id=uuid.uuid4(),
         name="Test",
@@ -218,7 +221,9 @@ def test_attach_image_if_missing_updates_row(mock_resolve):
 def test_attach_recipe_image_force_overwrites(mock_resolve):
     old = "https://images.pexels.com/photos/old/large.jpg"
     new = "https://images.pexels.com/photos/new/large.jpg"
-    mock_resolve.return_value = new
+    mock_resolve.return_value = ResolvedPexelsImage(
+        url=new, photographer="Bea", attribution_url="https://www.pexels.com/photo/new/"
+    )
     recipe = Recipe(
         id=uuid.uuid4(),
         name="Fried Rice",
