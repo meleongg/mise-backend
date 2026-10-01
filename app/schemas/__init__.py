@@ -59,10 +59,10 @@ class UserCreate(BaseModel):
         None,
         description="JSON array of allergens to avoid (e.g., ['nuts', 'shellfish'])",
     )
-    preferred_portion_size: Optional[str] = Field(
+    preferred_portion_size: Optional[float] = Field(
         None,
-        max_length=50,
-        description="Preferred serving size (e.g., '2-3', '4', 'family')",
+        gt=0,
+        description="Preferred serving count as a single positive number (e.g. 2, 4)",
     )
     max_prep_time_minutes: Optional[int] = Field(
         None, ge=0, description="Maximum acceptable prep time in minutes"
@@ -91,8 +91,8 @@ class UserUpdate(BaseModel):
     allergens: Optional[str] = Field(
         None, description="JSON array of allergens to avoid"
     )
-    preferred_portion_size: Optional[str] = Field(
-        None, max_length=50, description="Preferred serving size"
+    preferred_portion_size: Optional[float] = Field(
+        None, gt=0, description="Preferred serving count as a single positive number"
     )
     max_prep_time_minutes: Optional[int] = Field(
         None, ge=0, description="Maximum acceptable prep time"
@@ -242,7 +242,7 @@ class UserResponse(BaseModel):
     user_goal: str
     dietary_restrictions: Optional[str] = None
     allergens: Optional[str] = None
-    preferred_portion_size: Optional[str] = None
+    preferred_portion_size: Optional[float] = None
     max_prep_time_minutes: Optional[int] = None
     max_cook_time_minutes: Optional[int] = None
     recipe_repeat_preference: str = "standard"
@@ -326,7 +326,7 @@ class RecipeResponse(BaseModel):
     image_url: Optional[str]
     dietary_tags: Optional[str] = None
     allergens: Optional[str] = None
-    portion_size: Optional[str] = None
+    portion_size: Optional[float] = None
     prep_time_minutes: Optional[int] = None
     cook_time_minutes: Optional[int] = None
     skill_level_validated: Optional[str] = None
@@ -347,7 +347,7 @@ class WeeklyPlanEntryResponse(BaseModel):
     catalog_recipe_id: Optional[UUID] = None
     personal_recipe_id: Optional[UUID] = None
     recipe_snapshot: Dict[str, Any] = {}
-    selected_servings: Optional[str] = None
+    selected_servings: Optional[float] = None
     lifecycle_state: str = "planned"
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -563,4 +563,4 @@ class ShoppingCheckSyncRequest(BaseModel):
 
 
 class UpdatePlanEntryServingsRequest(BaseModel):
-    selected_servings: Optional[str] = Field(None, max_length=50)
+    selected_servings: Optional[float] = Field(None, gt=0)

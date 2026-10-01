@@ -23,7 +23,7 @@ class RecipeEditPatch(BaseModel):
     """Allowlisted fields a Sodie proposal may change."""
 
     title: Optional[str] = Field(None, min_length=1, max_length=200)
-    servings: Optional[str] = Field(None, max_length=50)
+    servings: Optional[float] = Field(None, gt=0)
     ingredients: Optional[List[Any]] = None
     instructions: Optional[Any] = None
     notes: Optional[str] = None
@@ -93,7 +93,7 @@ class RecipeEditPatchDraft(BaseModel):
         description="Short safety callout when allergen_conflict or diet_conflict is true.",
     )
     title: Optional[str] = Field(None, min_length=1, max_length=200)
-    servings: Optional[str] = Field(None, max_length=50)
+    servings: Optional[float] = Field(None, gt=0)
     ingredients: Optional[List[IngredientLine]] = Field(
         None,
         description=(
@@ -152,7 +152,7 @@ class PersonalRecipeResponse(BaseModel):
     name: str
     ingredients: Any
     instructions: Any
-    portion_size: Optional[str] = None
+    portion_size: Optional[float] = None
     notes: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     current_revision: int
@@ -170,7 +170,7 @@ class UpdatePersonalRecipeRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     ingredients: Optional[Any] = None
     instructions: Optional[Any] = None
-    portion_size: Optional[str] = Field(None, max_length=50)
+    portion_size: Optional[float] = Field(None, gt=0)
     notes: Optional[str] = None
 
 
@@ -218,7 +218,7 @@ class PreferenceTweakDraft(BaseModel):
     )
     max_prep_time_minutes: Optional[int] = Field(None, ge=0, le=480)
     max_cook_time_minutes: Optional[int] = Field(None, ge=0, le=480)
-    preferred_portion_size: Optional[str] = Field(None, max_length=50)
+    preferred_portion_size: Optional[float] = Field(None, gt=0)
     recipe_repeat_preference: Optional[Literal["standard", "sooner"]] = None
     change_summary: str = Field(..., min_length=1, max_length=300)
     assistant_reply: str = Field(..., min_length=1, max_length=500)

@@ -25,7 +25,7 @@ def _entry(db, plan, recipe, position, ingredients):
                 "ingredients": ingredients,
             }
         ),
-        selected_servings="2",
+        selected_servings=2.0,
         lifecycle_state="planned",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),

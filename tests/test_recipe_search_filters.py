@@ -47,7 +47,7 @@ def test_build_recipe_content_text_includes_metadata():
         cuisine="Italian",
         dietary_tags=["vegetarian"],
         allergens=["wheat"],
-        portion_size="4 servings",
+        portion_size=4.0,
         prep_time_minutes=10,
         cook_time_minutes=20,
         skill_level_validated="beginner",
@@ -58,4 +58,4 @@ def test_build_recipe_content_text_includes_metadata():
     assert "vegetarian" in text
     assert "wheat" in text
     assert "prep 10 minutes" in text
-    assert "portion 4 servings" in text
+    assert "portion 4" in text

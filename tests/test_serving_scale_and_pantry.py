@@ -10,7 +10,7 @@ from app.services.shopping import build_aggregated_items
 from app.services.weekly_plan import create_recipe_schedule
 
 
-def _entry(db, plan, recipe, position, ingredients, *, portion_size="2", selected="2"):
+def _entry(db, plan, recipe, position, ingredients, *, portion_size=2.0, selected=2.0):
     entry = WeeklyPlanEntry(
         id=uuid.uuid4(),
         weekly_plan_id=plan.id,
@@ -52,11 +52,38 @@ def test_migration_revises_shopping_head():
 
 def test_parse_servings_rejects_ranges_and_family():
     assert parse_servings("4") == 4.0
+    assert parse_servings(4) == 4.0
+    assert parse_servings(4.0) == 4.0
     assert parse_servings("1/2") == 0.5
     assert parse_servings("3 servings") == 3.0
+    assert parse_servings("Serves 4") == 4.0
     assert parse_servings("3-4") is None
     assert parse_servings("6+") is None
     assert parse_servings("family") is None
+
+
+def test_coerce_servings_for_migration_low_end():
+    from app.services.servings import coerce_servings_for_migration
+
+    assert coerce_servings_for_migration("6-8 people") == 6.0
+    assert coerce_servings_for_migration("6+") == 6.0
+    assert coerce_servings_for_migration("Serves 4") == 4.0
+    assert coerce_servings_for_migration("family") is None
+
+
+def test_migration_numeric_portion_revises_prep_timeline_head():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "alembic"
+        / "versions"
+        / "j8e9f0a1_numeric_portion_size.py"
+    )
+    spec = spec_from_file_location("j8e9f0a1", path)
+    assert spec is not None and spec.loader is not None
+    mod = module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.revision == "j8e9f0a1"
+    assert mod.down_revision == "i7d8e9f0"
 
 
 def test_scale_doubles_when_servings_parse(db, test_user, test_recipes):
@@ -75,8 +102,8 @@ def test_scale_doubles_when_servings_parse(db, test_user, test_recipes):
         test_recipes[0],
         0,
         [{"name": "Onion", "measure": "1 cup"}],
-        portion_size="2",
-        selected="4",
+        portion_size=2.0,
+        selected=4.0,
     )
     items = build_aggregated_items([entry])
     onion = next(i for i in items if i["normalized_name"] == "onion")
@@ -101,8 +128,8 @@ def test_unparseable_servings_leave_qty_and_flag_review(db, test_user, test_reci
         test_recipes[0],
         0,
         [{"name": "Onion", "measure": "1 cup"}],
-        portion_size="2",
-        selected="family",
+        portion_size="family",
+        selected=2.0,
     )
     items = build_aggregated_items([entry])
     onion = next(i for i in items if i["normalized_name"] == "onion")
@@ -122,17 +149,17 @@ def test_patch_selected_servings_and_generate_scales(
         test_recipes[0],
         0,
         [{"name": "Rice", "measure": "1 cup"}],
-        portion_size="2",
-        selected="2",
+        portion_size=2.0,
+        selected=2.0,
     )
     original_snapshot = entry.recipe_snapshot
 
     patched = client.patch(
         f"/api/weekly-plan/entries/{entry.id}",
-        json={"selected_servings": "4"},
+        json={"selected_servings": 4},
     )
     assert patched.status_code == 200
-    assert patched.json()["selected_servings"] == "4"
+    assert patched.json()["selected_servings"] == 4
     db.refresh(entry)
     assert entry.recipe_snapshot == original_snapshot
 
@@ -156,8 +183,8 @@ def test_omit_requires_confirm_and_survives_refresh(
         test_recipes[0],
         0,
         [{"name": "Garlic", "measure": "2 cloves"}],
-        portion_size="2",
-        selected="2",
+        portion_size=2.0,
+        selected=2.0,
     )
     created = client.post(
         "/api/shopping-lists/generate",

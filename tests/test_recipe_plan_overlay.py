@@ -41,7 +41,7 @@ def test_get_recipe_with_week_overlays_bound_personal_snapshot(
         instructions=json.dumps(
             [{"step": 1, "text": "Boil pasta"}, {"step": 2, "text": "Add chili"}]
         ),
-        portion_size="2 servings",
+        portion_size=2.0,
         notes="Extra heat",
         metadata_json=json.dumps({"cuisine": "Italian"}),
         current_revision=1,
@@ -67,7 +67,7 @@ def test_get_recipe_with_week_overlays_bound_personal_snapshot(
     assert body["plan_entry_id"]
     assert "chili" in body["ingredients"]
     assert "Add chili" in body["instructions"]
-    assert body["portion_size"] == "2 servings"
+    assert body["portion_size"] == 2.0
 
 
 def test_get_recipe_with_week_falls_back_when_unbound(

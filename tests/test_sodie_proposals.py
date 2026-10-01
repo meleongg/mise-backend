@@ -55,7 +55,7 @@ def _propose_body(recipe_id: str, *, key: str, title: str = "Spicy Pasta"):
         "patch": {
             "title": title,
             "notes": "Add chili flakes to taste.",
-            "servings": "4 servings",
+            "servings": 4,
         },
     }
 
@@ -854,14 +854,14 @@ def test_preference_from_request_persists_on_analytics_thread(
 ):
     from app.schemas.sodie_proposals import PreferenceTweakDraft
 
-    test_user.preferred_portion_size = "2"
+    test_user.preferred_portion_size = 2.0
     db.commit()
 
     monkeypatch.setattr(
         "app.routers.sodie.generate_preference_tweak",
         lambda *_a, **_k: PreferenceTweakDraft(
             intent="propose_preference",
-            preferred_portion_size="4",
+            preferred_portion_size=4.0,
             change_summary="Larger portions.",
             assistant_reply="Here’s a portion-size tweak.",
         ),

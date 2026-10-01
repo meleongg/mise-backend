@@ -102,8 +102,11 @@ class NewRecipeSchema(BaseModel):
             "Use [] only if truly none."
         ),
     )
-    portion_size: str = Field(
-        description="Serving size, e.g. '4 servings' or '2-3 servings'."
+    portion_size: float = Field(
+        description=(
+            "Serving count as a single positive number (e.g. 4). Never use ranges."
+        ),
+        gt=0,
     )
     prep_time_minutes: int = Field(
         description="Active prep time in minutes (chopping, mixing).",

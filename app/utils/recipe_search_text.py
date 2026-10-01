@@ -37,7 +37,7 @@ def build_recipe_content_text(
     instructions_text: str = "",
     dietary_tags: Optional[List[str]] = None,
     allergens: Optional[List[str]] = None,
-    portion_size: Optional[str] = None,
+    portion_size: Optional[float | str] = None,
     prep_time_minutes: Optional[int] = None,
     cook_time_minutes: Optional[int] = None,
     skill_level_validated: Optional[str] = None,

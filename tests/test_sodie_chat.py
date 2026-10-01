@@ -192,7 +192,7 @@ def test_personal_recipe_snapshot_is_owner_only(db, test_user, test_recipes):
         name="My edited pasta",
         ingredients='[{"name":"oats","measure":"1 cup"}]',
         instructions='[{"text":"Stir."}]',
-        portion_size="2",
+        portion_size=2.0,
         notes="extra oats",
         current_revision=2,
         is_active=True,

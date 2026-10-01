@@ -72,8 +72,8 @@ class User(Base):
         Text, nullable=True
     )  # JSON array of allergens to avoid (e.g., ["nuts", "shellfish", "dairy"])
     preferred_portion_size = Column(
-        String(50), nullable=True
-    )  # Preferred serving size (e.g., "1-2", "3-4", "5-6", "family")
+        Float, nullable=True
+    )  # Preferred serving count (numeric; UI may label as "N servings")
     max_prep_time_minutes = Column(
         Integer, nullable=True
     )  # Maximum acceptable prep time in minutes
@@ -189,8 +189,8 @@ class Recipe(Base):
         Text, nullable=True
     )  # JSON array of common allergens (e.g., ["nuts", "dairy"])
     portion_size = Column(
-        String(50), nullable=True
-    )  # Serving size (e.g., "4 servings", "6-8 people")
+        Float, nullable=True
+    )  # Serving count (numeric; null = shopping stays 1×)
     prep_time_minutes = Column(Integer, nullable=True)  # Preparation time in minutes
     cook_time_minutes = Column(Integer, nullable=True)  # Cooking time in minutes
     skill_level_validated = Column(
@@ -239,7 +239,7 @@ class WeeklyPlanEntry(Base):
         GUID, ForeignKey("personal_recipes.id"), nullable=True, index=True
     )
     recipe_snapshot = Column(Text, nullable=False)  # JSON snapshot at bind time
-    selected_servings = Column(String(50), nullable=True)
+    selected_servings = Column(Float, nullable=True)
     lifecycle_state = Column(
         String(20), nullable=False, default="planned"
     )  # planned, active, completed, omitted
@@ -298,7 +298,7 @@ class PersonalRecipe(Base):
     name = Column(String(200), nullable=False)
     ingredients = Column(Text, nullable=False)
     instructions = Column(Text, nullable=False)
-    portion_size = Column(String(50), nullable=True)
+    portion_size = Column(Float, nullable=True)
     notes = Column(Text, nullable=True)
     metadata_json = Column(Text, nullable=True)
     current_revision = Column(Integer, nullable=False, default=1)

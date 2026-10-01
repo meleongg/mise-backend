@@ -779,7 +779,7 @@ def update_personal_recipe(
     name: Optional[str] = None,
     ingredients: Any = None,
     instructions: Any = None,
-    portion_size: Optional[str] = None,
+    portion_size: Optional[float] = None,
     notes: Optional[str] = None,
 ) -> PersonalRecipe:
     personal = get_personal_recipe(db, user, personal_recipe_id)

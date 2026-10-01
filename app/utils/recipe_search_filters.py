@@ -21,7 +21,7 @@ def enrich_intent_query(
     dietary_restrictions: Optional[List[str]] = None,
     allergens: Optional[List[str]] = None,
     skill_level: Optional[str] = None,
-    portion_size: Optional[str] = None,
+    portion_size: Optional[float | str] = None,
     max_prep_time: Optional[int] = None,
     max_cook_time: Optional[int] = None,
 ) -> str:
