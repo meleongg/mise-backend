@@ -6,20 +6,62 @@ import re
 from typing import Optional
 
 _FRACTION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)\s*$")
+_ABOUT_PREFIX_RE = re.compile(
+    r"^\s*(?:about|approx\.?|approximately)\s+",
+    re.IGNORECASE,
+)
+_SERVES_PREFIX_RE = re.compile(r"^\s*serves?\s+", re.IGNORECASE)
 _LEADING_NUMBER_RE = re.compile(
-    r"^\s*(\d+(?:\.\d+)?(?:\s*/\s*\d+(?:\.\d+)?)?)\s*(?:servings?)?\s*$",
+    r"^\s*(\d+(?:\.\d+)?(?:\s*/\s*\d+(?:\.\d+)?)?)\s*"
+    r"(?:servings?|people|persons?|ppl)?\s*$",
     re.IGNORECASE,
 )
 _RANGE_RE = re.compile(r"\d+\s*-\s*\d+")
+_RANGE_EXTRACT_RE = re.compile(
+    r"^\s*(?:(?:about|approx\.?|approximately)\s+)?(?:serves?\s+)?"
+    r"(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)"
+    r"\s*(?:servings?|people|persons?|ppl)?\s*$",
+    re.IGNORECASE,
+)
+_OPEN_ENDED_RE = re.compile(
+    r"^\s*(?:(?:about|approx\.?|approximately)\s+)?(?:serves?\s+)?"
+    r"(\d+(?:\.\d+)?)\s*\+\s*"
+    r"(?:servings?|people|persons?|ppl)?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _strip_soft_noise(raw: str) -> str:
+    s = _ABOUT_PREFIX_RE.sub("", raw, count=1).strip()
+    s = _SERVES_PREFIX_RE.sub("", s, count=1).strip()
+    return s or raw
+
+
+def _parse_number_token(token: str) -> Optional[float]:
+    cleaned = token.replace(" ", "")
+    if "/" in cleaned:
+        parts = cleaned.split("/", 1)
+        try:
+            num = float(parts[0])
+            den = float(parts[1])
+        except ValueError:
+            return None
+        if den == 0:
+            return None
+        return num / den
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
 
 
 def parse_servings(value: Optional[str]) -> Optional[float]:
     """
     Parse a single serving count.
 
-    Accepts integers, decimals, simple fractions, and bare "N servings".
-    Rejects ranges (3-4), open-ended (6+), and labels like family — never invent
-    a midpoint.
+    Accepts integers, decimals, simple fractions, bare "N servings", and soft
+    forms like "Serves 4" / "4 people". Rejects ranges (3-4), open-ended (6+),
+    and labels like family — never invent a midpoint.
     """
     if value is None:
         return None
@@ -38,24 +80,55 @@ def parse_servings(value: Optional[str]) -> Optional[float]:
             return None
         return num / den
 
-    match = _LEADING_NUMBER_RE.match(raw)
+    candidate = _strip_soft_noise(raw)
+    match = _LEADING_NUMBER_RE.match(candidate)
     if not match:
         return None
-    token = match.group(1).replace(" ", "")
-    if "/" in token:
-        parts = token.split("/", 1)
-        try:
-            num = float(parts[0])
-            den = float(parts[1])
-        except ValueError:
-            return None
-        if den == 0:
-            return None
-        return num / den
-    try:
-        return float(token)
-    except ValueError:
+    return _parse_number_token(match.group(1))
+
+
+def format_servings(n: float) -> str:
+    """Canonical catalog form used by backfill and seed prompts."""
+    if n == int(n):
+        return f"{int(n)} servings"
+    rounded = round(n, 2)
+    if rounded == int(rounded):
+        return f"{int(rounded)} servings"
+    return f"{rounded} servings"
+
+
+def normalize_portion_size_for_backfill(value: Optional[str]) -> Optional[str]:
+    """
+    Rewrite messy portion labels to a parseable low-end form.
+
+    Live parse remains strict (no ranges). Backfill alone may rewrite ranges and
+    open-ended values to the low end as "N servings". Returns None when no safe
+    rewrite exists (caller should leave the row unchanged).
+    """
+    if value is None:
         return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+
+    parsed = parse_servings(raw)
+    if parsed is not None and parsed > 0:
+        canonical = format_servings(parsed)
+        return canonical if canonical != raw else None
+
+    range_match = _RANGE_EXTRACT_RE.match(raw)
+    if range_match:
+        low = float(range_match.group(1))
+        if low > 0:
+            return format_servings(low)
+
+    open_match = _OPEN_ENDED_RE.match(raw)
+    if open_match:
+        low = float(open_match.group(1))
+        if low > 0:
+            return format_servings(low)
+
+    return None
 
 
 def scale_factor(

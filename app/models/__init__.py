@@ -190,7 +190,7 @@ class Recipe(Base):
     )  # JSON array of common allergens (e.g., ["nuts", "dairy"])
     portion_size = Column(
         String(50), nullable=True
-    )  # Serving size (e.g., "4 servings", "6-8 people")
+    )  # Serving size (prefer "N servings"; avoid ranges)
     prep_time_minutes = Column(Integer, nullable=True)  # Preparation time in minutes
     cook_time_minutes = Column(Integer, nullable=True)  # Cooking time in minutes
     skill_level_validated = Column(

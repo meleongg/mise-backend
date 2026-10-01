@@ -54,9 +54,27 @@ def test_parse_servings_rejects_ranges_and_family():
     assert parse_servings("4") == 4.0
     assert parse_servings("1/2") == 0.5
     assert parse_servings("3 servings") == 3.0
+    assert parse_servings("Serves 4") == 4.0
+    assert parse_servings("serve 2 people") == 2.0
+    assert parse_servings("4 people") == 4.0
+    assert parse_servings("about 3 servings") == 3.0
     assert parse_servings("3-4") is None
+    assert parse_servings("6-8 people") is None
     assert parse_servings("6+") is None
     assert parse_servings("family") is None
+
+
+def test_normalize_portion_size_for_backfill_low_end():
+    from app.services.servings import normalize_portion_size_for_backfill
+
+    assert normalize_portion_size_for_backfill("Serves 4") == "4 servings"
+    assert normalize_portion_size_for_backfill("4 people") == "4 servings"
+    assert normalize_portion_size_for_backfill("6-8 people") == "6 servings"
+    assert normalize_portion_size_for_backfill("2-3 servings") == "2 servings"
+    assert normalize_portion_size_for_backfill("6+") == "6 servings"
+    assert normalize_portion_size_for_backfill("4 servings") is None
+    assert normalize_portion_size_for_backfill("family") is None
+    assert normalize_portion_size_for_backfill(None) is None
 
 
 def test_scale_doubles_when_servings_parse(db, test_user, test_recipes):
