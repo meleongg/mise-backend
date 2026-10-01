@@ -60,7 +60,7 @@ def test_wipe_removes_catalog_linked_rows_keeps_user_and_pantry(
         name="Personal copy",
         ingredients=json.dumps([{"name": "Salt", "measure": "1 tsp"}]),
         instructions="Mix",
-        portion_size="2",
+        portion_size=2.0,
         current_revision=1,
         is_active=True,
     )
@@ -84,9 +84,9 @@ def test_wipe_removes_catalog_linked_rows_keeps_user_and_pantry(
         catalog_recipe_id=recipe.id,
         personal_recipe_id=personal.id,
         recipe_snapshot=json.dumps(
-            {"id": str(recipe.id), "name": recipe.name, "portion_size": "2"}
+            {"id": str(recipe.id), "name": recipe.name, "portion_size": 2}
         ),
-        selected_servings="2",
+        selected_servings=2.0,
         lifecycle_state="planned",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),

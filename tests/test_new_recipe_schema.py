@@ -30,7 +30,7 @@ def test_new_recipe_schema_parses_full_payload():
             "difficulty": "easy",
             "dietary_tags": ["vegetarian"],
             "allergens": ["wheat"],
-            "portion_size": "4 servings",
+            "portion_size": 4,
             "prep_time_minutes": 10,
             "cook_time_minutes": 15,
             "skill_level_validated": "beginner",

@@ -41,8 +41,12 @@ class RecipeMetadata(BaseModel):
     allergens: List[str] = Field(
         description="List of ALL common allergens present in ingredients. Use empty list [] ONLY if truly allergen-free. Common allergens: nuts, peanuts, tree nuts, dairy, milk, eggs, soy, wheat, gluten, shellfish, fish, sesame"
     )
-    portion_size: str = Field(
-        description="Estimated serving size. REQUIRED - must provide even if not in source. Format: 'X servings' or 'X-Y people'. Examples: '4 servings', '6-8 people', '2-3 servings'"
+    portion_size: float = Field(
+        description=(
+            "Estimated serving count as a single positive number (e.g. 4). "
+            "REQUIRED even if not in source. Never use ranges or people/family wording."
+        ),
+        gt=0,
     )
     prep_time_minutes: int = Field(
         description="Active preparation time in minutes (chopping, mixing, marinating). REQUIRED - estimate if not provided. Must be > 0. Range: 5-120 minutes typical",
@@ -153,7 +157,7 @@ CRITICAL REQUIREMENTS:
 1. ALL fields are REQUIRED - you must provide values even if you need to make reasonable inferences
 2. If cuisine is missing: infer from recipe name, ingredients, or cooking techniques
 3. If allergens are unclear: analyze ingredients carefully and list all potential allergens
-4. If portion size is not stated: estimate based on ingredient quantities (e.g., "4 servings", "6-8 servings")
+4. If portion size is not stated: estimate a single count (e.g., 4). Never use ranges.
 5. If times are missing: estimate based on recipe complexity and cooking methods
 6. skill_level_validated must be EXACTLY one of: "beginner", "medium", or "advanced" (lowercase)
 
@@ -170,7 +174,7 @@ Instructions: {meal_data.get('strInstructions')}
 REQUIRED OUTPUT (all fields mandatory):
 1. dietary_tags - Array of diet types this recipe fits (vegetarian, vegan, gluten-free, dairy-free, keto, paleo, etc.)
 2. allergens - Array of ALL allergens present (nuts, dairy, eggs, soy, shellfish, fish, wheat, gluten, etc.)
-3. portion_size - Serving size as string (e.g., "4 servings", "6-8 people", "2-3 servings")
+3. portion_size - Single positive number of servings (e.g., 4). No ranges, no strings.
 4. prep_time_minutes - Active preparation time (chopping, mixing, etc.)
 5. cook_time_minutes - Cooking/baking time (passive time in oven, stovetop, etc.)
 6. skill_level_validated - Difficulty: "beginner", "medium", or "advanced"

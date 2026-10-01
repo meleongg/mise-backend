@@ -145,7 +145,7 @@ def build_aggregated_items(
         recipe_name = str(snapshot.get("name") or "Recipe")
         baseline = snapshot.get("portion_size")
         factor, servings_review, servings_reason = scale_factor(
-            entry.selected_servings, baseline if isinstance(baseline, str) else None
+            entry.selected_servings, baseline
         )
         for row in _ingredient_rows(snapshot.get("ingredients")):
             name = row["name"]
@@ -654,7 +654,7 @@ def sync_shopping_check_states(
 
 
 def update_plan_entry_servings(
-    db: Session, user: User, entry_id: uuid.UUID, selected_servings: Optional[str]
+    db: Session, user: User, entry_id: uuid.UUID, selected_servings: Optional[float]
 ) -> WeeklyPlanEntry:
     entry = (
         db.query(WeeklyPlanEntry)
@@ -667,10 +667,9 @@ def update_plan_entry_servings(
     )
     if not entry:
         raise HTTPException(status_code=404, detail="Plan entry not found")
-    cleaned = (selected_servings or "").strip() or None
-    if cleaned is not None and len(cleaned) > 50:
-        raise HTTPException(status_code=422, detail="selected_servings too long")
-    entry.selected_servings = cleaned
+    if selected_servings is not None and selected_servings <= 0:
+        raise HTTPException(status_code=422, detail="selected_servings must be > 0")
+    entry.selected_servings = selected_servings
     entry.updated_at = _now()
     db.commit()
     db.refresh(entry)

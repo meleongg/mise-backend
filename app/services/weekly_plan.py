@@ -338,11 +338,13 @@ def recipe_response_with_optional_entry_overlay(
     name = str(snap.get("name") or "").strip() or base.name
     cuisine = str(snap.get("cuisine") or "").strip() or base.cuisine
     difficulty = str(snap.get("difficulty") or "").strip() or base.difficulty
-    portion = (
-        str(snap.get("portion_size") or "").strip()
-        or (entry.selected_servings or None)
-        or base.portion_size
-    )
+    from app.services.servings import parse_servings
+
+    portion = parse_servings(snap.get("portion_size"))
+    if portion is None:
+        portion = parse_servings(entry.selected_servings)
+    if portion is None:
+        portion = base.portion_size
     image = snap.get("image_url")
     if image is not None:
         image = str(image).strip() or base.image_url
