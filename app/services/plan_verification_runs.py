@@ -32,12 +32,13 @@ def record_plan_verification_run(
     codes = gate.failure_codes()
     display = None if gate.ok else gate.as_detail()["message"]
     if evaluation is not None:
-        evaluator_kind = EVALUATOR_KIND
+        evaluator_kind = getattr(evaluation, "evaluator_kind", None) or EVALUATOR_KIND
         evaluator_passed = bool(evaluation.evaluator_passed)
         output = evaluation.as_output_json()
         output["auto_repaired"] = bool(auto_repaired)
         output["attempt_number"] = int(attempt_number)
         evaluator_output = json.dumps(output)
+        evaluator_model_id = getattr(evaluation, "evaluator_model_id", None)
     else:
         evaluator_kind = "deterministic_stub_v1"
         evaluator_passed = bool(gate.ok)
@@ -50,6 +51,7 @@ def record_plan_verification_run(
                 "auto_repaired": bool(auto_repaired),
             }
         )
+        evaluator_model_id = None
 
     run = RecipeVerificationRun(
         id=uuid.uuid4(),
@@ -68,7 +70,7 @@ def record_plan_verification_run(
         evaluator_kind=evaluator_kind,
         evaluator_passed=evaluator_passed,
         evaluator_output_json=evaluator_output,
-        evaluator_model_id=None,
+        evaluator_model_id=evaluator_model_id,
         display_message=display,
         created_at=datetime.now(timezone.utc),
     )

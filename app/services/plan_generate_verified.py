@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Recipe, User
 from app.schemas import GenerationSummary, WeeklyPlanResponse
-from app.services.plan_evaluator import evaluate_plan_candidates
+from app.services.plan_evaluator import evaluate_plan_candidates_llm_assisted
 from app.services.plan_timeline import build_prep_timeline
 from app.services.plan_timeline_attach import (
     attach_prep_timeline,
@@ -75,7 +75,7 @@ async def persist_verified_plan(
     attempt_number: int,
     auto_repaired: bool,
 ) -> WeeklyPlanResponse:
-    evaluation = evaluate_plan_candidates(db, user, recipes)
+    evaluation = evaluate_plan_candidates_llm_assisted(db, user, recipes)
     new_plan = await plan_service.generate_weekly_plan(
         user=user,
         week_number=week_number,
