@@ -236,3 +236,68 @@ def test_omit_entry_drops_unique_ingredient_keeps_shared(
     onion = next(i for i in items if i["normalized_name"] == "onion")
     assert onion["quantity"] == 1.0
     assert len(onion["sources"]) == 1
+
+
+def test_sync_checks_last_client_timestamp_wins(
+    client, db, test_user, test_recipes, test_plan
+):
+    test_plan.recipe_schedule = create_recipe_schedule([str(test_recipes[0].id)])
+    db.flush()
+    _entry(
+        db,
+        test_plan,
+        test_recipes[0],
+        0,
+        [{"name": "Milk", "measure": "1 cup"}, {"name": "Eggs", "measure": "6"}],
+    )
+    created = client.post(
+        "/api/shopping-lists/generate",
+        json={"week_number": test_plan.week_number},
+    )
+    assert created.status_code == 200
+    items = created.json()["items"]
+    milk = next(i for i in items if i["normalized_name"] == "milk")
+    eggs = next(i for i in items if i["normalized_name"] == "eggs")
+
+    t1 = "2026-09-30T12:00:00+00:00"
+    t2 = "2026-09-30T12:05:00+00:00"
+    t3 = "2026-09-30T12:01:00+00:00"  # stale relative to t2 for milk
+
+    synced = client.post(
+        "/api/shopping-lists/sync-checks",
+        json={
+            "updates": [
+                {
+                    "item_id": milk["id"],
+                    "is_checked": True,
+                    "client_updated_at": t1,
+                },
+                {
+                    "item_id": milk["id"],
+                    "is_checked": False,
+                    "client_updated_at": t2,
+                },
+                {
+                    "item_id": milk["id"],
+                    "is_checked": True,
+                    "client_updated_at": t3,
+                },
+                {
+                    "item_id": eggs["id"],
+                    "is_checked": True,
+                    "client_updated_at": t2,
+                },
+                {
+                    "item_id": str(uuid.uuid4()),
+                    "is_checked": True,
+                    "client_updated_at": t2,
+                },
+            ]
+        },
+    )
+    assert synced.status_code == 200
+    body = synced.json()
+    milk2 = next(i for i in body["items"] if i["normalized_name"] == "milk")
+    eggs2 = next(i for i in body["items"] if i["normalized_name"] == "eggs")
+    assert milk2["is_checked"] is False
+    assert eggs2["is_checked"] is True
