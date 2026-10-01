@@ -576,6 +576,17 @@ def format_kitchen_live_state(kitchen_state: Optional[Any]) -> str:
             "- Prefer concise help for this active step. Do not invent timers "
             "or silent recipe edits."
         )
+
+    if bool(data.get("read_aloud_active")):
+        lines.append(
+            "- On-device read-aloud is playing the current step text. Do not "
+            "claim you are speaking aloud or invent audio controls."
+        )
+    else:
+        lines.append(
+            "- The cook can use on-device read-aloud for this step in Kitchen "
+            "Mode; coach chat cannot play audio."
+        )
     return "\n".join(lines) + "\n"
 
 
