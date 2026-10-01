@@ -8,7 +8,13 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
 from app.models import Recipe, RecipeVerificationRun, User
-from app.services.plan_evaluator import EVALUATOR_KIND, evaluate_plan_candidates
+from app.services.plan_evaluator import (
+    EVALUATOR_KIND,
+    LLM_ASSISTED_KIND,
+    LlmPlanEvalDraft,
+    evaluate_plan_candidates,
+    evaluate_plan_candidates_llm_assisted,
+)
 from app.services.plan_verification import verify_plan_candidates
 from app.services.plan_verification_runs import (
     client_summary_for_failed_run,
@@ -194,3 +200,47 @@ def test_eligibility_includes_last_failed_verification(client, db, test_user):
     assert body["last_generation_verification"]["attempt_number"] == 2
     assert body["last_generation_verification"]["auto_repair_exhausted"] is True
     assert "Creamy Pasta" not in json.dumps(body)
+
+
+def test_record_llm_assisted_evaluation_stores_model_id(db, test_user):
+    safe = _recipe(
+        allergens=json.dumps([]),
+        name="Safe Salad",
+        external_id=f"safe-{uuid.uuid4()}",
+    )
+    db.add(safe)
+    db.flush()
+    test_user.allergens = json.dumps(["dairy"])
+    test_user.frequency = 1
+    db.flush()
+    pass_gate = verify_plan_candidates(test_user, [safe.id], [safe])
+    assert pass_gate.ok is True
+
+    def fake_llm(_user, _recipes, _base):
+        return LlmPlanEvalDraft(
+            confidence="medium",
+            confidence_reasons=["Shopping list may need a quick skim."],
+            timeline_feasibility="",
+            pantry_coverage_note="",
+            shopping_checklist_note="Check produce freshness at your store.",
+        )
+
+    evaluation = evaluate_plan_candidates_llm_assisted(
+        db, test_user, [safe], llm_invoke=fake_llm
+    )
+    assert evaluation.evaluator_kind == LLM_ASSISTED_KIND
+    run = record_plan_verification_run(
+        db,
+        user=test_user,
+        target_week_number=2,
+        flow="initial",
+        gate=pass_gate,
+        candidate_ids=[safe.id],
+        evaluation=evaluation,
+    )
+    db.flush()
+    assert run.evaluator_kind == LLM_ASSISTED_KIND
+    assert run.evaluator_model_id
+    assert run.evaluator_passed is True
+    output = json.loads(run.evaluator_output_json)
+    assert output.get("evaluator_kind") == LLM_ASSISTED_KIND

@@ -372,6 +372,7 @@ class GenerationSummary(BaseModel):
     auto_repaired: bool = False
     confidence: str
     confidence_reasons: List[str] = []
+    evaluator_kind: Optional[str] = None
 
 
 class PrepTimelineItemResponse(BaseModel):
