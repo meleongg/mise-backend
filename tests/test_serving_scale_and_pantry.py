@@ -86,6 +86,21 @@ def test_migration_numeric_portion_revises_prep_timeline_head():
     assert mod.down_revision == "i7d8e9f0"
 
 
+def test_migration_pexels_attribution_revises_numeric_head():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "alembic"
+        / "versions"
+        / "k9f0a1b2_pexels_image_attribution.py"
+    )
+    spec = spec_from_file_location("k9f0a1b2", path)
+    assert spec is not None and spec.loader is not None
+    mod = module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.revision == "k9f0a1b2"
+    assert mod.down_revision == "j8e9f0a1"
+
+
 def test_scale_doubles_when_servings_parse(db, test_user, test_recipes):
     plan = WeeklyPlan(
         id=uuid.uuid4(),

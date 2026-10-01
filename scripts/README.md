@@ -1,69 +1,43 @@
-# ChefPath Backend Scripts
+# Mise backend scripts
 
-This directory contains scripts for managing and maintaining the ChefPath backend database and AI infrastructure.
+Operator utilities for the FastAPI service. Prefer `--dry-run` before mutating
+hosted data.
 
-## Available Scripts
-
-### Hydrate Recipes (`scripts/hydrate_recipes.py`)
-
-Fetches and stores all available recipes from TheMealDB API using exhaustive search:
+## Catalog wipe
 
 ```bash
-python scripts/hydrate_recipes.py
+python scripts/wipe_catalog_linked_data.py --dry-run
+python scripts/wipe_catalog_linked_data.py --force
 ```
 
-- Populates the database with all unique recipes.
-- Ensures each recipe is enriched for downstream AI use.
+Deletes recipes and dependents (plans, shopping, personal recipes, progress).
+Keeps users, pantry, and Sodie threads/messages.
 
-### Generate Embeddings (`scripts/generate_embeddings.py`)
-
-Generates vector embeddings for all recipes missing an embedding:
+## LLM catalog seed (no TheMealDB)
 
 ```bash
-python scripts/generate_embeddings.py
+python scripts/seed_llm_catalog.py --dry-run
+python scripts/seed_llm_catalog.py --per-cuisine 5
 ```
 
-- Uses OpenAI's `text-embedding-3-small` model.
-- Optimized for batch processing and cost efficiency.
+Generates Mise-owned recipes via structured LLM output (numeric `portion_size`,
+embeddings, `is_ai_generated=true`). Leave images empty for Pexels backfill.
 
-### Backfill Recipe Images (`scripts/backfill_recipe_images.py`)
+`scripts/seed_recipes.py` (legacy TheMealDB) is retired and exits with guidance.
 
-Fills `recipes.image_url` from Pexels for rows with no image (AI recipes, etc.):
+## Pexels hero images
 
 ```bash
-cd backend
-# .env needs DATABASE_URL + PEXELS_API_KEY
 python scripts/backfill_recipe_images.py --dry-run
 python scripts/backfill_recipe_images.py --limit 50
 python scripts/backfill_recipe_images.py
-python scripts/backfill_recipe_images.py --force --limit 20   # re-resolve bad images
 ```
 
-- Default delay 18s between requests (~200/hour Pexels limit).
-- Without `--force`: only rows with null/empty `image_url`.
-- With `--force`: all recipes (or `--id` one); overwrites `image_url` when Pexels finds a new image, keeps the old URL if search fails.
+Requires `PEXELS_API_KEY`. Stores `image_url` plus photographer attribution
+fields when present. Default delay ~18s between calls.
 
-### Clear Database (`scripts/clear_database.py`)
+## Other
 
-Removes all data while keeping table structure:
-
-```bash
-python scripts/clear_database.py
-python scripts/clear_database.py --force  # Skip confirmation
-```
-
-### Testing & Evaluation
-
-LangSmith-powered evaluation system for agent behavior and intent classification:
-
-```bash
-# Setup datasets (one-time)
-python scripts/evaluate_agent.py setup
-
-# Run evaluations
-python scripts/evaluate_agent.py intent    # Intent classification only
-python scripts/evaluate_agent.py agent     # Agent behavior only
-python scripts/evaluate_agent.py all       # All evaluations
-
-# View results at: https://smith.langchain.com/experiments
-```
+- `scripts/clear_database.py` — full wipe including users (dev only; prefer
+  catalog wipe for reseed).
+- `scripts/evaluate_agent.py` — LangSmith evaluations when configured.

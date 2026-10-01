@@ -32,8 +32,6 @@ SKILL_LEVEL_DESCRIPTIONS = {
 # Cuisine options (for reference/validation)
 CUISINE_OPTIONS = ["Italian", "Chinese", "Mexican", "American"]
 
-THEMEALDB_BASE_URL = "https://www.themealdb.com/api/json/v1/1"
-
 # Recipe swap configuration
 MAX_SWAPS_PER_WEEK = 3
 RECIPE_COOLDOWN_DAYS = 14
