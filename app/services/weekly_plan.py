@@ -1,6 +1,6 @@
 import uuid
 import json
-from typing import List
+from typing import Any, List
 from sqlalchemy.orm import Session
 from app.models import (
     User,
@@ -266,6 +266,106 @@ def get_active_unlocked_plan(db: Session, user: User) -> WeeklyPlan | None:
         )
         .order_by(WeeklyPlan.week_number.desc())
         .first()
+    )
+
+
+def _snapshot_field_as_recipe_text(value: Any, fallback: str) -> str:
+    """Normalize snapshot ingredients/instructions to the string shape Recipe API uses."""
+    if value is None:
+        return fallback
+    if isinstance(value, str):
+        return value if value.strip() else fallback
+    try:
+        return json.dumps(value, default=str)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def find_bound_plan_entry_for_catalog(
+    db: Session,
+    user: User,
+    catalog_recipe_id: uuid.UUID,
+    week_number: int,
+) -> WeeklyPlanEntry | None:
+    """Return the user's plan entry for catalog+week when personally bound."""
+    plan = (
+        db.query(WeeklyPlan)
+        .filter(
+            WeeklyPlan.user_id == user.id,
+            WeeklyPlan.week_number == int(week_number),
+            WeeklyPlan.is_unlocked.is_(True),
+        )
+        .first()
+    )
+    if plan is None:
+        return None
+    ensure_plan_entries(plan, db)
+    return (
+        db.query(WeeklyPlanEntry)
+        .filter(
+            WeeklyPlanEntry.weekly_plan_id == plan.id,
+            WeeklyPlanEntry.catalog_recipe_id == catalog_recipe_id,
+            WeeklyPlanEntry.personal_recipe_id.isnot(None),
+        )
+        .first()
+    )
+
+
+def recipe_response_with_optional_entry_overlay(
+    recipe: Recipe,
+    entry: WeeklyPlanEntry | None,
+):
+    """Build RecipeResponse; overlay personal snapshot fields when entry is bound."""
+    from app.schemas import RecipeResponse
+
+    base = RecipeResponse.model_validate(recipe)
+    if entry is None or entry.personal_recipe_id is None:
+        return base.model_copy(
+            update={
+                "content_source": "catalog",
+                "personal_recipe_id": None,
+                "plan_entry_id": None,
+            }
+        )
+
+    try:
+        snap = json.loads(entry.recipe_snapshot) if entry.recipe_snapshot else {}
+    except (TypeError, json.JSONDecodeError):
+        snap = {}
+    if not isinstance(snap, dict):
+        snap = {}
+
+    name = str(snap.get("name") or "").strip() or base.name
+    cuisine = str(snap.get("cuisine") or "").strip() or base.cuisine
+    difficulty = str(snap.get("difficulty") or "").strip() or base.difficulty
+    portion = (
+        str(snap.get("portion_size") or "").strip()
+        or (entry.selected_servings or None)
+        or base.portion_size
+    )
+    image = snap.get("image_url")
+    if image is not None:
+        image = str(image).strip() or base.image_url
+    else:
+        image = base.image_url
+
+    return base.model_copy(
+        update={
+            "name": name,
+            "cuisine": cuisine,
+            "difficulty": difficulty,
+            "ingredients": _snapshot_field_as_recipe_text(
+                snap.get("ingredients"), base.ingredients
+            ),
+            "instructions": _snapshot_field_as_recipe_text(
+                snap.get("instructions"), base.instructions
+            ),
+            "portion_size": portion,
+            "image_url": image,
+            "content_source": "plan_entry_personal",
+            "personal_recipe_id": entry.personal_recipe_id,
+            "plan_entry_id": entry.id,
+        }
     )
 
 
