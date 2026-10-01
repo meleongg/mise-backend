@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -21,6 +22,8 @@ from app.models import (
     UserRecipeProgress,
 )
 from app.schemas.sodie_proposals import RecipeEditPatch
+
+logger = logging.getLogger(__name__)
 
 
 def _json_dumps(value: Any) -> str:
@@ -602,10 +605,10 @@ def propose_recipe_pick(
         ),
         impact_json=_json_dumps(
             {
-                "serving_text": "open catalog recipe",
-                "plan_schedule": "unchanged until weekly_plan_entries",
-                "shopping_list": "unchanged",
-                "list_reconciliation_queued": False,
+                "serving_text": "catalog recipe servings unchanged",
+                "plan_schedule": "adds to this week's plan on approve",
+                "shopping_list": "refreshed after approve when a list exists",
+                "list_reconciliation_queued": True,
             }
         ),
         rationale=rationale,
@@ -621,7 +624,10 @@ def propose_recipe_pick(
 def apply_recipe_pick(
     db: Session, user: User, proposal_id: UUID
 ) -> SodieActionProposal:
-    """Approve a Tips recipe pick — no plan mutation; FE opens the catalog recipe."""
+    """Approve a Tips recipe pick and schedule it onto the active weekly plan."""
+    from app.services.shopping import generate_or_refresh_shopping_list
+    from app.services.weekly_plan import append_catalog_recipe_to_plan
+
     proposal = _get_owned_proposal(db, proposal_id, user.id)
     if proposal.status == "applied":
         return proposal
@@ -643,6 +649,43 @@ def apply_recipe_pick(
         raise HTTPException(
             status_code=409, detail="Suggested recipe is no longer available"
         )
+
+    schedule_result = append_catalog_recipe_to_plan(db, user, recipe)
+    outcome = schedule_result.get("outcome")
+    week_number = schedule_result.get("week_number")
+    shopping_refreshed = False
+    if outcome in {"scheduled", "already_scheduled"} and week_number is not None:
+        try:
+            generate_or_refresh_shopping_list(db, user, int(week_number))
+            shopping_refreshed = True
+        except Exception:
+            logger.exception(
+                "Shopping refresh after recipe pick schedule failed (week=%s)",
+                week_number,
+            )
+            shopping_refreshed = False
+
+    if outcome == "scheduled":
+        plan_schedule = f"added to week {week_number}"
+    elif outcome == "already_scheduled":
+        plan_schedule = f"already on week {week_number}"
+    else:
+        plan_schedule = "no active weekly plan — recipe not scheduled"
+
+    proposal.impact_json = _json_dumps(
+        {
+            "serving_text": "catalog recipe servings unchanged",
+            "plan_schedule": plan_schedule,
+            "shopping_list": (
+                "refreshed from plan entries"
+                if shopping_refreshed
+                else "unchanged (no list refresh)"
+            ),
+            "list_reconciliation_queued": bool(shopping_refreshed),
+            "schedule_outcome": outcome,
+            "week_number": week_number,
+        }
+    )
 
     now = datetime.now(timezone.utc)
     proposal.status = "applied"

@@ -160,6 +160,88 @@ def ensure_plan_entries(plan: WeeklyPlan, db: Session) -> list[WeeklyPlanEntry]:
     return sync_plan_entries_from_schedule(plan, db)
 
 
+def get_active_unlocked_plan(db: Session, user: User) -> WeeklyPlan | None:
+    """Latest unlocked weekly plan for the user, if any."""
+    return (
+        db.query(WeeklyPlan)
+        .filter(
+            WeeklyPlan.user_id == user.id,
+            WeeklyPlan.is_unlocked.is_(True),
+        )
+        .order_by(WeeklyPlan.week_number.desc())
+        .first()
+    )
+
+
+def append_catalog_recipe_to_plan(
+    db: Session,
+    user: User,
+    recipe: Recipe,
+    *,
+    plan: WeeklyPlan | None = None,
+) -> dict:
+    """Append a catalog recipe to the active plan schedule + entries.
+
+    Returns a small result dict for proposal impact:
+    - outcome: scheduled | already_scheduled | no_active_plan
+    - week_number when a plan exists
+    """
+    target = plan or get_active_unlocked_plan(db, user)
+    if target is None:
+        return {"outcome": "no_active_plan", "week_number": None}
+
+    try:
+        recipe_ids = parse_recipe_schedule(target.recipe_schedule or "[]")
+    except (TypeError, json.JSONDecodeError, ValueError):
+        recipe_ids = []
+
+    recipe_id_str = str(recipe.id)
+    if recipe_id_str in recipe_ids:
+        ensure_plan_entries(target, db)
+        return {
+            "outcome": "already_scheduled",
+            "week_number": int(target.week_number),
+        }
+
+    recipe_ids.append(recipe_id_str)
+    target.recipe_schedule = create_recipe_schedule(recipe_ids)
+    sync_plan_entries_from_schedule(target, db)
+
+    existing_progress = (
+        db.query(UserRecipeProgress)
+        .filter(
+            UserRecipeProgress.user_id == user.id,
+            UserRecipeProgress.recipe_id == recipe.id,
+            UserRecipeProgress.week_number == target.week_number,
+        )
+        .first()
+    )
+    if not existing_progress:
+        db.add(
+            UserRecipeProgress(
+                user_id=user.id,
+                recipe_id=recipe.id,
+                week_number=target.week_number,
+                status="not_started",
+                completed_at=None,
+            )
+        )
+
+    WeeklyPlanService().record_recipe_suggestions(
+        user_id=user.id,
+        week_number=int(target.week_number),
+        recipe_ids=[recipe.id],
+        source="tips_pick",
+        db=db,
+        clear_existing=False,
+    )
+
+    return {
+        "outcome": "scheduled",
+        "week_number": int(target.week_number),
+    }
+
+
 class WeeklyPlanService:
     def load_recipes_for_plan(self, plan: WeeklyPlan, db: Session) -> WeeklyPlan:
         """Load the full Recipe objects for a WeeklyPlan and attach them as a property."""

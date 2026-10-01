@@ -881,12 +881,128 @@ def test_recipe_pick_from_request_proposes_and_approve(
     proposal = body["proposal"]
     assert proposal["action_type"] == "propose_recipe_pick"
     assert proposal["source_recipe_id"] == str(recipe.id)
-    assert proposal["impact"]["plan_schedule"] == "unchanged until weekly_plan_entries"
+    assert "adds to this week's plan" in proposal["impact"]["plan_schedule"]
 
     approved = client.post(f"/api/sodie/proposals/{proposal['id']}/approve")
     assert approved.status_code == 200
     assert approved.json()["status"] == "applied"
     assert approved.json()["source_recipe_id"] == str(recipe.id)
+
+
+def test_recipe_pick_approve_schedules_onto_active_plan(
+    client, db: Session, test_user: User, test_recipes: list, test_plan, monkeypatch
+):
+    from app.models import WeeklyPlanEntry
+    from app.schemas.sodie_proposals import RecipePickDraft
+    from app.services.weekly_plan import parse_recipe_schedule
+    from uuid import UUID
+
+    pick = test_recipes[1]
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_pick",
+        lambda *_a, **_k: RecipePickDraft(
+            intent="propose_recipe_pick",
+            recipe_id=UUID(str(pick.id)),
+            change_summary="Good next cook.",
+            assistant_reply="Try this one.",
+        ),
+    )
+    created = client.post(
+        "/api/sodie/proposals/recipes/from-request",
+        json={
+            "request": "Suggest a recipe for me",
+            "idempotency_key": "pick-schedule-1",
+        },
+    )
+    assert created.status_code == 200
+    proposal_id = created.json()["proposal"]["id"]
+
+    before = parse_recipe_schedule(test_plan.recipe_schedule)
+    assert str(pick.id) not in before
+
+    approved = client.post(f"/api/sodie/proposals/{proposal_id}/approve")
+    assert approved.status_code == 200
+    body = approved.json()
+    assert body["status"] == "applied"
+    assert body["impact"]["schedule_outcome"] == "scheduled"
+    assert body["impact"]["week_number"] == test_plan.week_number
+    assert f"week {test_plan.week_number}" in body["impact"]["plan_schedule"]
+
+    db.refresh(test_plan)
+    after = parse_recipe_schedule(test_plan.recipe_schedule)
+    assert str(pick.id) in after
+    assert after[-1] == str(pick.id)
+    entries = (
+        db.query(WeeklyPlanEntry)
+        .filter(WeeklyPlanEntry.weekly_plan_id == test_plan.id)
+        .order_by(WeeklyPlanEntry.position.asc())
+        .all()
+    )
+    assert any(str(e.catalog_recipe_id) == str(pick.id) for e in entries)
+
+
+def test_recipe_pick_approve_already_on_plan_is_idempotent(
+    client, db: Session, test_user: User, test_recipes: list, test_plan, monkeypatch
+):
+    from app.schemas.sodie_proposals import RecipePickDraft
+    from app.services.weekly_plan import parse_recipe_schedule
+    from uuid import UUID
+
+    existing = test_recipes[0]
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_pick",
+        lambda *_a, **_k: RecipePickDraft(
+            intent="propose_recipe_pick",
+            recipe_id=UUID(str(existing.id)),
+            change_summary="Already familiar.",
+            assistant_reply="This one’s on your plan.",
+        ),
+    )
+    created = client.post(
+        "/api/sodie/proposals/recipes/from-request",
+        json={
+            "request": "Suggest something",
+            "idempotency_key": "pick-already-1",
+        },
+    )
+    proposal_id = created.json()["proposal"]["id"]
+    before = parse_recipe_schedule(test_plan.recipe_schedule)
+
+    approved = client.post(f"/api/sodie/proposals/{proposal_id}/approve")
+    assert approved.status_code == 200
+    assert approved.json()["impact"]["schedule_outcome"] == "already_scheduled"
+    db.refresh(test_plan)
+    assert parse_recipe_schedule(test_plan.recipe_schedule) == before
+
+
+def test_recipe_pick_approve_without_plan_still_applies(
+    client, db: Session, test_user: User, test_recipes: list, monkeypatch
+):
+    from app.schemas.sodie_proposals import RecipePickDraft
+    from uuid import UUID
+
+    pick = test_recipes[0]
+    monkeypatch.setattr(
+        "app.routers.sodie.generate_recipe_pick",
+        lambda *_a, **_k: RecipePickDraft(
+            intent="propose_recipe_pick",
+            recipe_id=UUID(str(pick.id)),
+            change_summary="No plan yet.",
+            assistant_reply="Here’s a suggestion.",
+        ),
+    )
+    created = client.post(
+        "/api/sodie/proposals/recipes/from-request",
+        json={
+            "request": "What should I cook?",
+            "idempotency_key": "pick-no-plan-1",
+        },
+    )
+    proposal_id = created.json()["proposal"]["id"]
+    approved = client.post(f"/api/sodie/proposals/{proposal_id}/approve")
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "applied"
+    assert approved.json()["impact"]["schedule_outcome"] == "no_active_plan"
 
 
 def test_recipe_pick_rejects_invented_id(
