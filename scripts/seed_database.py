@@ -18,7 +18,7 @@ import json
 from pathlib import Path
 from datetime import datetime, timezone
 from dotenv import load_dotenv
-from app.services.weekly_plan import create_recipe_schedule
+from app.services.weekly_plan import replace_plan_catalog_entries
 
 load_dotenv()
 
@@ -83,7 +83,6 @@ async def seed_database(clear_first: bool = False):
         print(f"\n🍽️  Creating mock Chinese recipes...")
         mock_recipes_data = [
             {
-                "external_id": "1001",
                 "name": "Mock Sweet and Sour Pork",
                 "cuisine": "Chinese",
                 "ingredients": json.dumps(
@@ -97,13 +96,10 @@ async def seed_database(clear_first: bool = False):
                 ),
                 "instructions": "1. Fry pork. 2. Add sauce. 3. Serve.",
                 "difficulty": "easy",
-                "tags": json.dumps(["pork", "sweet", "sour"]),
                 "image_url": "https://example.com/sweet_sour_pork.jpg",
                 "content_text": 'Recipe Name: Mock Sweet and Sour Pork Cuisine: Chinese Difficulty: easy Tags: ["pork", "sweet", "sour"] Ingredients: [{"name": "pork", "measure": "300g"}, {"name": "pineapple", "measure": "100g"}, {"name": "bell pepper", "measure": "1"}, {"name": "vinegar", "measure": "2 tbsp"}, {"name": "sugar", "measure": "2 tbsp"}] Instructions: 1. Fry pork. 2. Add sauce. 3. Serve.',
-                "is_ai_generated": False,
             },
             {
-                "external_id": "1002",
                 "name": "Mock Kung Pao Chicken",
                 "cuisine": "Chinese",
                 "ingredients": json.dumps(
@@ -116,13 +112,10 @@ async def seed_database(clear_first: bool = False):
                 ),
                 "instructions": "1. Stir fry chicken. 2. Add peanuts and sauce. 3. Serve.",
                 "difficulty": "medium",
-                "tags": json.dumps(["chicken", "spicy"]),
                 "image_url": "https://example.com/kung_pao_chicken.jpg",
                 "content_text": 'Recipe Name: Mock Kung Pao Chicken Cuisine: Chinese Difficulty: medium Tags: ["chicken", "spicy"] Ingredients: [{"name": "chicken", "measure": "250g"}, {"name": "peanuts", "measure": "50g"}, {"name": "chili peppers", "measure": "3"}, {"name": "soy sauce", "measure": "2 tbsp"}] Instructions: 1. Stir fry chicken. 2. Add peanuts and sauce. 3. Serve.',
-                "is_ai_generated": False,
             },
             {
-                "external_id": "1003",
                 "name": "Mock Mapo Tofu",
                 "cuisine": "Chinese",
                 "ingredients": json.dumps(
@@ -135,10 +128,8 @@ async def seed_database(clear_first: bool = False):
                 ),
                 "instructions": "1. Cook pork. 2. Add tofu and sauce. 3. Simmer.",
                 "difficulty": "easy",
-                "tags": json.dumps(["tofu", "spicy", "vegetarian"]),
                 "image_url": "https://example.com/mapo_tofu.jpg",
                 "content_text": 'Recipe Name: Mock Mapo Tofu Cuisine: Chinese Difficulty: easy Tags: ["tofu", "spicy", "vegetarian"] Ingredients: [{"name": "tofu", "measure": "400g"}, {"name": "ground pork", "measure": "100g"}, {"name": "chili bean paste", "measure": "1 tbsp"}, {"name": "green onion", "measure": "2"}] Instructions: 1. Cook pork. 2. Add tofu and sauce. 3. Simmer.',
-                "is_ai_generated": False,
             },
         ]
         recipes = []
@@ -152,19 +143,18 @@ async def seed_database(clear_first: bool = False):
 
         # Mock week 1 plan for Test user using static recipes
         print(f"\n📅 Generating week 1 plan for Test user (mocked)...")
-        recipe_ids = [str(recipe.id) for recipe in recipes]
-        recipe_schedule = create_recipe_schedule(recipe_ids)
-
         plan = WeeklyPlan(
             user_id=test_user.id,
             week_number=1,
-            recipe_schedule=recipe_schedule,
             is_unlocked=True,
         )
         db.add(plan)
+        db.flush()
+        replace_plan_catalog_entries(plan, recipes, db)
         db.commit()
         db.refresh(plan)
-        print(f"  ✅ Created week 1 plan with recipe_schedule: {recipe_schedule}")
+        recipe_ids = [str(recipe.id) for recipe in recipes]
+        print(f"  ✅ Created week 1 plan with entries for recipes: {recipe_ids}")
         # Seed UserRecipeProgress for each recipe in the weekly plan
         print(f"\n📝 Seeding UserRecipeProgress records...")
         for i, recipe in enumerate(recipes):
@@ -179,8 +169,6 @@ async def seed_database(clear_first: bool = False):
                     status="completed",
                     feedback="just_right",
                     completed_at=datetime.now(timezone.utc),
-                    satisfaction_rating=5,
-                    difficulty_rating=3,
                 )
             else:
                 # Others as not started
@@ -192,8 +180,6 @@ async def seed_database(clear_first: bool = False):
                     status="not_started",
                     feedback=None,
                     completed_at=None,
-                    satisfaction_rating=None,
-                    difficulty_rating=None,
                 )
             db.add(progress)
         db.commit()

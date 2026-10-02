@@ -98,14 +98,13 @@ def test_profile_preferences_and_pantry_are_user_scoped(client, test_user):
         json={
             "cuisine": "Italian", "frequency": 3, "skill_level": "intermediate",
             "user_goal": "Learn New Techniques", "city": "Vancouver",
-            "preferred_retailer": "No Frills", "sodie_memory_enabled": True,
-            "chat_retention_policy": "18_months",
+            "preferred_retailer": "No Frills",
         },
     )
     assert profile.status_code == 200
     assert profile.json()["city"] == "Vancouver"
     pantry = client.put("/api/users/pantry", json={"items": [
-        {"name": "Garlic", "is_baseline": True}, {"name": "Miso", "is_baseline": False}
+        {"name": "Garlic"}, {"name": "Miso"}
     ]})
     assert pantry.status_code == 200
     assert [item["name"] for item in pantry.json()] == ["Garlic", "Miso"]

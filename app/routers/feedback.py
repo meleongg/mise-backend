@@ -234,8 +234,6 @@ async def update_recipe_status(
             progress.completed_at = None
             progress.feedback = None
             progress.notes = None
-            progress.satisfaction_rating = None
-            progress.difficulty_rating = None
 
     db.commit()
     db.refresh(progress)

@@ -10,7 +10,10 @@ from uuid import UUID
 from app.models import Recipe, User, WeeklyPlan
 from app.schemas import PrepTimelineResponse, WeeklyPlanResponse
 from app.services.plan_timeline import PrepTimeline, build_prep_timeline
-from app.services.weekly_plan import parse_recipe_schedule
+from app.services.weekly_plan import (
+    list_plan_entries,
+    ordered_catalog_uuids_from_entries,
+)
 
 
 def timeline_to_storage_dict(
@@ -54,13 +57,17 @@ def _ordered_ids_from_response(
 ) -> Optional[list[UUID]]:
     if ordered_recipe_ids is not None:
         return list(ordered_recipe_ids)
-    if getattr(response, "recipe_schedule", None):
-        try:
-            return [
-                UUID(str(x)) for x in parse_recipe_schedule(response.recipe_schedule)
-            ]
-        except (TypeError, ValueError, json.JSONDecodeError, KeyError):
-            return None
+    recipes = getattr(response, "recipes", None) or []
+    if recipes:
+        return [r.id for r in recipes]
+    entries = getattr(response, "entries", None) or []
+    if entries:
+        ordered = sorted(entries, key=lambda e: e.position)
+        return [
+            e.catalog_recipe_id
+            for e in ordered
+            if getattr(e, "catalog_recipe_id", None) is not None
+        ]
     return None
 
 
@@ -106,14 +113,12 @@ def rebuild_and_save_prep_timeline(
     recipes: Sequence[Recipe],
     *,
     ordered_recipe_ids: Optional[Sequence[UUID]] = None,
+    db=None,
 ) -> PrepTimeline:
     """Recompute timeline for a mutated plan and write the snapshot column."""
     order = list(ordered_recipe_ids) if ordered_recipe_ids is not None else None
-    if order is None and plan.recipe_schedule:
-        try:
-            order = [UUID(str(x)) for x in parse_recipe_schedule(plan.recipe_schedule)]
-        except (TypeError, ValueError, json.JSONDecodeError, KeyError):
-            order = None
+    if order is None and db is not None:
+        order = ordered_catalog_uuids_from_entries(list_plan_entries(plan, db))
     timeline = build_prep_timeline(user, recipes, ordered_recipe_ids=order)
     save_prep_timeline_on_plan(plan, timeline)
     return timeline

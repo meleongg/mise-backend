@@ -14,7 +14,6 @@ from app.schemas import (
 )
 from app.services.weekly_plan import (
     WeeklyPlanService,
-    parse_recipe_schedule,
     serialize_plan_entry,
 )
 from app.services import shopping as shopping_service

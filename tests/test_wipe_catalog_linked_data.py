@@ -21,9 +21,7 @@ from app.models import (
     WeeklyPlan,
     WeeklyPlanEntry,
 )
-from app.services.weekly_plan import create_recipe_schedule
-
-
+from app.services.weekly_plan import replace_plan_catalog_entries
 def _load_wipe_module():
     path = (
         Path(__file__).resolve().parents[1]
@@ -47,7 +45,6 @@ def test_wipe_removes_catalog_linked_rows_keeps_user_and_pantry(
         id=uuid.uuid4(),
         user_id=test_user.id,
         week_number=99,
-        recipe_schedule=create_recipe_schedule([str(recipe.id)]),
         swap_count=0,
     )
     db.add(plan)

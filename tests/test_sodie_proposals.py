@@ -126,10 +126,9 @@ def test_approve_binds_personal_copy_to_matching_plan_entry(
     client, db: Session, test_user: User, test_recipes: list, test_plan
 ):
     from app.models import WeeklyPlanEntry
-    from app.services.weekly_plan import ensure_plan_entries, parse_recipe_schedule
-
+    from app.services.weekly_plan import ensure_plan_entries, ordered_catalog_ids_from_entries, list_plan_entries
     recipe = test_recipes[0]
-    assert str(recipe.id) in parse_recipe_schedule(test_plan.recipe_schedule)
+    assert str(recipe.id) in ordered_catalog_ids_from_entries(list_plan_entries(test_plan, db))
     ensure_plan_entries(test_plan, db)
     db.flush()
 
@@ -284,17 +283,19 @@ def test_proposal_and_personal_recipe_access_denied_across_users(
         app.dependency_overrides[get_current_user] = override_get_current_user
 
 
-def test_plan_schedule_unchanged_on_approve(
+def test_plan_entries_unchanged_on_approve(
     client, db: Session, test_plan, test_recipes: list
 ):
-    before = test_plan.recipe_schedule
+    from app.services.weekly_plan import list_plan_entries, ordered_catalog_ids_from_entries
+
+    before = ordered_catalog_ids_from_entries(list_plan_entries(test_plan, db))
     proposal_id = client.post(
         "/api/sodie/proposals",
         json=_propose_body(str(test_recipes[0].id), key="plan-unchanged"),
     ).json()["proposal"]["id"]
     assert client.post(f"/api/sodie/proposals/{proposal_id}/approve").status_code == 200
     db.refresh(test_plan)
-    assert test_plan.recipe_schedule == before
+    assert ordered_catalog_ids_from_entries(list_plan_entries(test_plan, db)) == before
 
 
 def test_merge_ingredient_updates_keeps_full_list():
@@ -935,7 +936,7 @@ def test_recipe_pick_approve_schedules_onto_active_plan(
 ):
     from app.models import WeeklyPlanEntry
     from app.schemas.sodie_proposals import RecipePickDraft
-    from app.services.weekly_plan import parse_recipe_schedule
+    from app.services.weekly_plan import list_plan_entries, ordered_catalog_ids_from_entries
     from uuid import UUID
 
     pick = test_recipes[1]
@@ -958,7 +959,7 @@ def test_recipe_pick_approve_schedules_onto_active_plan(
     assert created.status_code == 200
     proposal_id = created.json()["proposal"]["id"]
 
-    before = parse_recipe_schedule(test_plan.recipe_schedule)
+    before = ordered_catalog_ids_from_entries(list_plan_entries(test_plan, db))
     assert str(pick.id) not in before
 
     approved = client.post(f"/api/sodie/proposals/{proposal_id}/approve")
@@ -970,7 +971,7 @@ def test_recipe_pick_approve_schedules_onto_active_plan(
     assert f"week {test_plan.week_number}" in body["impact"]["plan_schedule"]
 
     db.refresh(test_plan)
-    after = parse_recipe_schedule(test_plan.recipe_schedule)
+    after = ordered_catalog_ids_from_entries(list_plan_entries(test_plan, db))
     assert str(pick.id) in after
     assert after[-1] == str(pick.id)
     entries = (
@@ -986,7 +987,7 @@ def test_recipe_pick_approve_already_on_plan_is_idempotent(
     client, db: Session, test_user: User, test_recipes: list, test_plan, monkeypatch
 ):
     from app.schemas.sodie_proposals import RecipePickDraft
-    from app.services.weekly_plan import parse_recipe_schedule
+    from app.services.weekly_plan import list_plan_entries, ordered_catalog_ids_from_entries
     from uuid import UUID
 
     existing = test_recipes[0]
@@ -1007,13 +1008,13 @@ def test_recipe_pick_approve_already_on_plan_is_idempotent(
         },
     )
     proposal_id = created.json()["proposal"]["id"]
-    before = parse_recipe_schedule(test_plan.recipe_schedule)
+    before = ordered_catalog_ids_from_entries(list_plan_entries(test_plan, db))
 
     approved = client.post(f"/api/sodie/proposals/{proposal_id}/approve")
     assert approved.status_code == 200
     assert approved.json()["impact"]["schedule_outcome"] == "already_scheduled"
     db.refresh(test_plan)
-    assert parse_recipe_schedule(test_plan.recipe_schedule) == before
+    assert ordered_catalog_ids_from_entries(list_plan_entries(test_plan, db)) == before
 
 
 def test_recipe_pick_approve_without_plan_still_applies(

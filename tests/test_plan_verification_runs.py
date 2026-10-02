@@ -61,7 +61,6 @@ def _user(**overrides) -> User:
 def _recipe(**overrides) -> Recipe:
     recipe = Recipe(
         id=uuid.uuid4(),
-        external_id=f"ext-{uuid.uuid4()}",
         name="Creamy Pasta",
         cuisine="Italian",
         ingredients=json.dumps([{"name": "pasta", "measure": "200g"}]),
@@ -122,7 +121,6 @@ def test_record_failed_and_passed_runs(db, test_user):
     safe = _recipe(
         allergens=json.dumps([]),
         name="Safe Salad",
-        external_id=f"safe-{uuid.uuid4()}",
     )
     db.add(safe)
     db.flush()
@@ -206,7 +204,6 @@ def test_record_llm_assisted_evaluation_stores_model_id(db, test_user):
     safe = _recipe(
         allergens=json.dumps([]),
         name="Safe Salad",
-        external_id=f"safe-{uuid.uuid4()}",
     )
     db.add(safe)
     db.flush()

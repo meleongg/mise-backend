@@ -85,10 +85,6 @@ class User(Base):
     )  # standard (14d cooldown) or sooner (7d)
     city = Column(String(100), nullable=True)
     preferred_retailer = Column(String(100), nullable=True)
-    sodie_memory_enabled = Column(Boolean, nullable=False, default=False)
-    chat_retention_policy = Column(
-        String(20), nullable=False, default="18_months"
-    )
     hashed_password = Column(
         String, nullable=False
     )  # Store hashed password for authentication
@@ -124,7 +120,6 @@ class UserPantryItem(Base):
     id = Column(GUID, primary_key=True, default=uuid.uuid4, index=True)
     user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
     name = Column(String(200), nullable=False)
-    is_baseline = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="pantry_items")
@@ -162,13 +157,11 @@ class Recipe(Base):
     __tablename__ = "recipes"
 
     id = Column(GUID, primary_key=True, default=uuid.uuid4, index=True)
-    external_id = Column(String(50), unique=True, index=True)  # TheMealDB ID
     name = Column(String(200), nullable=False)
     cuisine = Column(String(50), nullable=False)
     ingredients = Column(Text, nullable=False)  # JSON string of ingredients
     instructions = Column(Text, nullable=False)
     difficulty = Column(String(20), nullable=False)  # easy, medium, hard
-    tags = Column(Text)  # JSON string of tags
     image_url = Column(String(500))
     image_attribution_photographer = Column(String(200), nullable=True)
     image_attribution_url = Column(String(500), nullable=True)
@@ -181,7 +174,6 @@ class Recipe(Base):
     # AI fields
     content_text = Column(TEXT, nullable=True)  # Full text for embedding
     embedding = Column(Vector(1536), nullable=True)  # Vector embedding
-    is_ai_generated = Column(Boolean, default=False)  # Flag for AI origin
 
     # AI-augmented metadata fields
     dietary_tags = Column(
@@ -206,9 +198,6 @@ class WeeklyPlan(Base):
     id = Column(GUID, primary_key=True, default=uuid.uuid4, index=True)
     user_id = Column(GUID, ForeignKey("users.id"), nullable=False)
     week_number = Column(Integer, nullable=False)  # week of the course (1-N)
-    recipe_schedule = Column(
-        Text, nullable=False
-    )  # JSON string of ordered recipes: [{"recipe_id": "uuid", "order": 0}, ...]
     swap_count = Column(Integer, default=0)  # Number of swaps used this week (max 3)
     generated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     is_unlocked = Column(Boolean, default=False)
@@ -227,7 +216,7 @@ class WeeklyPlan(Base):
 
 
 class WeeklyPlanEntry(Base):
-    """Normalized plan slot with optional personal-recipe lineage (dual-writes with recipe_schedule)."""
+    """Normalized plan slot with optional personal-recipe lineage."""
 
     __tablename__ = "weekly_plan_entries"
 
@@ -270,10 +259,6 @@ class UserRecipeProgress(Base):
     # Relationships
     user = relationship("User", back_populates="recipe_progress")
     recipe = relationship("Recipe", back_populates="recipe_progress")
-
-    # Enhanced feedback for AI
-    satisfaction_rating = Column(Integer, nullable=True)  # 1-5 rating
-    difficulty_rating = Column(Integer, nullable=True)  # 1-5 rating
 
 
 class RecipeSuggestion(Base):

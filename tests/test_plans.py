@@ -1,4 +1,4 @@
-import json
+from app.services.weekly_plan import replace_plan_catalog_entries
 
 
 def test_get_all_weekly_plans(client, test_user, test_plan):
@@ -18,19 +18,15 @@ def test_get_weekly_plan(client, test_user, test_plan):
     data = response.json()
     assert data["week_number"] == 1
     assert data["swap_count"] == 0
+    assert "recipe_schedule" not in data
 
 
-def test_weekly_plan_recipes_follow_schedule_order(
+def test_weekly_plan_recipes_follow_entry_order(
     client, test_user, test_plan, test_recipes, db
 ):
-    """The API returns recipes in the explicit schedule order, not DB order."""
-    test_plan.recipe_schedule = json.dumps(
-        [
-            {"recipe_id": str(test_recipes[1].id), "order": 0},
-            {"recipe_id": str(test_recipes[0].id), "order": 1},
-        ]
-    )
-    db.flush()
+    """The API returns recipes in plan-entry order, not DB order."""
+    replace_plan_catalog_entries(test_plan, [test_recipes[1], test_recipes[0]], db)
+    db.commit()
 
     response = client.get(
         f"/api/weekly-plan?user_id={test_user.id}&week_number={test_plan.week_number}"

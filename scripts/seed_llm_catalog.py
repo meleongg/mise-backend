@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Seed a small Mise-owned recipe catalog via LLM structured output (no TheMealDB).
+Seed a small Mise-owned recipe catalog via LLM structured output.
 
 Generates ~N recipes per cuisine in CUISINE_OPTIONS with numeric portion_size,
-parse-friendly ingredients, embeddings, and is_ai_generated=True.
+parse-friendly ingredients, and embeddings.
 Images are left empty for scripts/backfill_recipe_images.py (Pexels).
 
 Requires DATABASE_URL and OPENAI_API_KEY (e.g. backend/.env).
@@ -73,7 +73,6 @@ class GeneratedRecipe(BaseModel):
     portion_size: float = Field(gt=0, description="Single positive serving count")
     prep_time_minutes: int = Field(ge=1)
     cook_time_minutes: int = Field(ge=0)
-    tags: List[str] = Field(default_factory=list)
 
 
 SKILL_CYCLE = ["beginner", "medium", "advanced", "beginner", "medium"]
@@ -144,13 +143,11 @@ def persist_recipe(db: Session, generated: GeneratedRecipe, embeddings: OpenAIEm
     embedding = embeddings.embed_query(content_text)
     recipe = Recipe(
         id=uuid.uuid4(),
-        external_id=None,
         name=generated.name.strip(),
         cuisine=generated.cuisine,
         ingredients=ingredients_json,
         instructions=instructions_json,
         difficulty=generated.difficulty,
-        tags=json.dumps(generated.tags or []),
         image_url=None,
         dietary_tags=json.dumps(generated.dietary_tags),
         allergens=json.dumps(generated.allergens),
@@ -160,7 +157,6 @@ def persist_recipe(db: Session, generated: GeneratedRecipe, embeddings: OpenAIEm
         skill_level_validated=generated.skill_level_validated,
         content_text=content_text,
         embedding=embedding,
-        is_ai_generated=True,
     )
     db.add(recipe)
     db.commit()

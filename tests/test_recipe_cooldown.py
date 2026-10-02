@@ -9,13 +9,11 @@ def _seed_recipe(db, recipe_id: uuid.UUID) -> None:
     db.add(
         Recipe(
             id=recipe_id,
-            external_id=str(recipe_id),
             name="Cooldown Test Recipe",
             cuisine="Italian",
             ingredients='["salt"]',
             instructions="Cook",
             difficulty="easy",
-            tags='["test"]',
             image_url="https://example.com/image.jpg",
         )
     )
@@ -156,3 +154,50 @@ def test_get_user_exclusion_ids_includes_recently_completed_recipes(db):
 
     assert just_completed_recipe_id in exclusion_ids
     assert older_completed_recipe_id not in exclusion_ids
+
+
+def test_get_user_exclusion_ids_excludes_too_hard_feedback(db):
+    service = WeeklyPlanService()
+    user = User(
+        id=uuid.uuid4(),
+        email="hard@example.com",
+        first_name="Hard",
+        last_name="Feedback",
+        cuisine="Italian",
+        frequency=3,
+        skill_level="beginner",
+        user_goal="confidence",
+        hashed_password="hash",
+    )
+    db.add(user)
+    db.flush()
+
+    hard_id = uuid.uuid4()
+    ok_id = uuid.uuid4()
+    _seed_recipe(db, hard_id)
+    _seed_recipe(db, ok_id)
+    db.add_all(
+        [
+            UserRecipeProgress(
+                user_id=user.id,
+                recipe_id=hard_id,
+                week_number=1,
+                status="completed",
+                feedback="too_hard",
+                completed_at=datetime.now(timezone.utc) - timedelta(days=30),
+            ),
+            UserRecipeProgress(
+                user_id=user.id,
+                recipe_id=ok_id,
+                week_number=1,
+                status="completed",
+                feedback="just_right",
+                completed_at=datetime.now(timezone.utc) - timedelta(days=30),
+            ),
+        ]
+    )
+    db.flush()
+
+    exclusion_ids = service.get_user_exclusion_ids(user, db)
+    assert hard_id in exclusion_ids
+    assert ok_id not in exclusion_ids

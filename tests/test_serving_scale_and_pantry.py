@@ -7,9 +7,7 @@ from pathlib import Path
 from app.models import UserPantryItem, WeeklyPlan, WeeklyPlanEntry
 from app.services.servings import parse_servings, scale_factor
 from app.services.shopping import build_aggregated_items
-from app.services.weekly_plan import create_recipe_schedule
-
-
+from app.services.weekly_plan import replace_plan_catalog_entries
 def _entry(db, plan, recipe, position, ingredients, *, portion_size=2.0, selected=2.0):
     entry = WeeklyPlanEntry(
         id=uuid.uuid4(),
@@ -106,7 +104,6 @@ def test_scale_doubles_when_servings_parse(db, test_user, test_recipes):
         id=uuid.uuid4(),
         user_id=test_user.id,
         week_number=10,
-        recipe_schedule=create_recipe_schedule([str(test_recipes[0].id)]),
         swap_count=0,
     )
     db.add(plan)
@@ -132,7 +129,6 @@ def test_unparseable_servings_leave_qty_and_flag_review(db, test_user, test_reci
         id=uuid.uuid4(),
         user_id=test_user.id,
         week_number=11,
-        recipe_schedule=create_recipe_schedule([str(test_recipes[0].id)]),
         swap_count=0,
     )
     db.add(plan)
@@ -156,7 +152,7 @@ def test_unparseable_servings_leave_qty_and_flag_review(db, test_user, test_reci
 def test_patch_selected_servings_and_generate_scales(
     client, db, test_user, test_recipes, test_plan
 ):
-    test_plan.recipe_schedule = create_recipe_schedule([str(test_recipes[0].id)])
+    replace_plan_catalog_entries(test_plan, [test_recipes[0]], db)
     db.flush()
     entry = _entry(
         db,
@@ -190,7 +186,7 @@ def test_patch_selected_servings_and_generate_scales(
 def test_omit_requires_confirm_and_survives_refresh(
     client, db, test_user, test_recipes, test_plan
 ):
-    test_plan.recipe_schedule = create_recipe_schedule([str(test_recipes[0].id)])
+    replace_plan_catalog_entries(test_plan, [test_recipes[0]], db)
     db.flush()
     _entry(
         db,
@@ -242,10 +238,9 @@ def test_baseline_pantry_does_not_auto_omit(
             id=uuid.uuid4(),
             user_id=test_user.id,
             name="Garlic",
-            is_baseline=True,
         )
     )
-    test_plan.recipe_schedule = create_recipe_schedule([str(test_recipes[0].id)])
+    replace_plan_catalog_entries(test_plan, [test_recipes[0]], db)
     db.flush()
     _entry(
         db,

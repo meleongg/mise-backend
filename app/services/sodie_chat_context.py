@@ -13,7 +13,11 @@ from sqlalchemy.orm import Session
 
 from app.constants import MAX_SWAPS_PER_WEEK
 from app.models import PersonalRecipe, Recipe, User, UserRecipeProgress, WeeklyPlan
-from app.services.weekly_plan import WeeklyPlanService, parse_recipe_schedule
+from app.services.weekly_plan import (
+    WeeklyPlanService,
+    list_plan_entries,
+    ordered_catalog_ids_from_entries,
+)
 from app.services import shopping as shopping_service
 from app.utils.prompt_helpers import get_goal_description, get_skill_description
 
@@ -347,9 +351,7 @@ def authorize_page_context(
         plan_service = WeeklyPlanService()
         plan_service.load_recipes_for_plan(plan, db)
         recipes: List[Recipe] = getattr(plan, "recipes", []) or []
-        recipe_ids = parse_recipe_schedule(plan.recipe_schedule)
-        recipes_dict = {str(r.id): r for r in recipes}
-        ordered = [recipes_dict[rid] for rid in recipe_ids if rid in recipes_dict]
+        ordered = recipes
         meal_lines = []
         for idx, recipe in enumerate(ordered, start=1):
             meal_lines.append(
@@ -486,7 +488,7 @@ def build_sodie_chat_context(
         ]
     )
 
-    recipe_ids = parse_recipe_schedule(plan.recipe_schedule)
+    recipe_ids = ordered_catalog_ids_from_entries(list_plan_entries(plan, db))
     recipes_dict = {str(r.id): r for r in recipes}
     ordered_recipes = [recipes_dict[rid] for rid in recipe_ids if rid in recipes_dict]
 
