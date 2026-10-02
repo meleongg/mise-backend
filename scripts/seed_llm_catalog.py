@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Seed a small Mise-owned recipe catalog via LLM structured output (no TheMealDB).
+Seed a small Mise-owned recipe catalog via LLM structured output.
 
 Generates ~N recipes per cuisine in CUISINE_OPTIONS with numeric portion_size,
 parse-friendly ingredients, and embeddings.

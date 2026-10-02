@@ -24,7 +24,7 @@ Deletes `sodie_messages` then `sodie_threads` (nulls proposal `thread_id` first)
 Keeps users, pantry, and catalog. Use after a catalog wipe when you want a
 conversational clean slate before LLM seed.
 
-## LLM catalog seed (no TheMealDB)
+## LLM catalog seed
 
 ```bash
 python scripts/seed_llm_catalog.py --dry-run
@@ -34,7 +34,7 @@ python scripts/seed_llm_catalog.py --per-cuisine 5
 Generates Mise-owned recipes via structured LLM output (numeric `portion_size`,
 embeddings). Leave images empty for Pexels backfill.
 
-`scripts/seed_recipes.py` (legacy TheMealDB) is retired and exits with guidance.
+`scripts/seed_recipes.py` (legacy catalog import) is retired and exits with guidance.
 
 ## Pexels hero images
 

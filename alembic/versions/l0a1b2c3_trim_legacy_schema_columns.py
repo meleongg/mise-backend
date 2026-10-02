@@ -1,11 +1,11 @@
-"""Trim legacy unused schema columns after MealDB / stub features
+"""Trim legacy unused schema columns (post-reseed cleanup)
 
 Revision ID: l0a1b2c3
 Revises: k9f0a1b2
 Create Date: 2026-10-01 00:00:00.000000
 
 Drops:
-- recipes.external_id (legacy import / TheMealDB key)
+- recipes.external_id (legacy third-party import id)
 - recipes.tags (superseded by dietary_tags)
 - recipes.is_ai_generated (write-only provenance flag)
 - user_recipe_progress.satisfaction_rating / difficulty_rating
