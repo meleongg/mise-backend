@@ -96,10 +96,8 @@ async def seed_database(clear_first: bool = False):
                 ),
                 "instructions": "1. Fry pork. 2. Add sauce. 3. Serve.",
                 "difficulty": "easy",
-                "tags": json.dumps(["pork", "sweet", "sour"]),
                 "image_url": "https://example.com/sweet_sour_pork.jpg",
                 "content_text": 'Recipe Name: Mock Sweet and Sour Pork Cuisine: Chinese Difficulty: easy Tags: ["pork", "sweet", "sour"] Ingredients: [{"name": "pork", "measure": "300g"}, {"name": "pineapple", "measure": "100g"}, {"name": "bell pepper", "measure": "1"}, {"name": "vinegar", "measure": "2 tbsp"}, {"name": "sugar", "measure": "2 tbsp"}] Instructions: 1. Fry pork. 2. Add sauce. 3. Serve.',
-                "is_ai_generated": False,
             },
             {
                 "name": "Mock Kung Pao Chicken",
@@ -114,10 +112,8 @@ async def seed_database(clear_first: bool = False):
                 ),
                 "instructions": "1. Stir fry chicken. 2. Add peanuts and sauce. 3. Serve.",
                 "difficulty": "medium",
-                "tags": json.dumps(["chicken", "spicy"]),
                 "image_url": "https://example.com/kung_pao_chicken.jpg",
                 "content_text": 'Recipe Name: Mock Kung Pao Chicken Cuisine: Chinese Difficulty: medium Tags: ["chicken", "spicy"] Ingredients: [{"name": "chicken", "measure": "250g"}, {"name": "peanuts", "measure": "50g"}, {"name": "chili peppers", "measure": "3"}, {"name": "soy sauce", "measure": "2 tbsp"}] Instructions: 1. Stir fry chicken. 2. Add peanuts and sauce. 3. Serve.',
-                "is_ai_generated": False,
             },
             {
                 "name": "Mock Mapo Tofu",
@@ -132,10 +128,8 @@ async def seed_database(clear_first: bool = False):
                 ),
                 "instructions": "1. Cook pork. 2. Add tofu and sauce. 3. Simmer.",
                 "difficulty": "easy",
-                "tags": json.dumps(["tofu", "spicy", "vegetarian"]),
                 "image_url": "https://example.com/mapo_tofu.jpg",
                 "content_text": 'Recipe Name: Mock Mapo Tofu Cuisine: Chinese Difficulty: easy Tags: ["tofu", "spicy", "vegetarian"] Ingredients: [{"name": "tofu", "measure": "400g"}, {"name": "ground pork", "measure": "100g"}, {"name": "chili bean paste", "measure": "1 tbsp"}, {"name": "green onion", "measure": "2"}] Instructions: 1. Cook pork. 2. Add tofu and sauce. 3. Simmer.',
-                "is_ai_generated": False,
             },
         ]
         recipes = []
@@ -176,8 +170,6 @@ async def seed_database(clear_first: bool = False):
                     status="completed",
                     feedback="just_right",
                     completed_at=datetime.now(timezone.utc),
-                    satisfaction_rating=5,
-                    difficulty_rating=3,
                 )
             else:
                 # Others as not started
@@ -189,8 +181,6 @@ async def seed_database(clear_first: bool = False):
                     status="not_started",
                     feedback=None,
                     completed_at=None,
-                    satisfaction_rating=None,
-                    difficulty_rating=None,
                 )
             db.add(progress)
         db.commit()

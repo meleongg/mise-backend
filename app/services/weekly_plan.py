@@ -472,7 +472,7 @@ class WeeklyPlanService:
         """
         Fetches all recipe IDs to exclude from the next plan.
         Includes:
-        1. Recipes rated as too difficult (difficulty_rating >= 4)
+        1. Recipes marked too_hard via categorical feedback
         2. Recipes suggested within the cooldown window (plan + swap)
         3. Recipes completed within the cooldown window
         """
@@ -481,7 +481,7 @@ class WeeklyPlanService:
         hard_recipes = db.scalars(
             select(UserRecipeProgress.recipe_id).filter(
                 (UserRecipeProgress.user_id == user.id)
-                & (UserRecipeProgress.difficulty_rating >= 4)
+                & (UserRecipeProgress.feedback == "too_hard")
             )
         ).all()
         exclusion_ids.extend(hard_recipes)

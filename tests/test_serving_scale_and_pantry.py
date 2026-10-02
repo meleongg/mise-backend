@@ -242,7 +242,6 @@ def test_baseline_pantry_does_not_auto_omit(
             id=uuid.uuid4(),
             user_id=test_user.id,
             name="Garlic",
-            is_baseline=True,
         )
     )
     test_plan.recipe_schedule = create_recipe_schedule([str(test_recipes[0].id)])

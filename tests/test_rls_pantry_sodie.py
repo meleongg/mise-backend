@@ -107,7 +107,7 @@ def test_pantry_items_are_isolated_between_users(client, db: Session, test_user:
 
     seeded = client.put(
         "/api/users/pantry",
-        json={"items": [{"name": "Olive oil", "is_baseline": True}]},
+        json={"items": [{"name": "Olive oil"}]},
     )
     assert seeded.status_code == 200
     assert len(seeded.json()) == 1

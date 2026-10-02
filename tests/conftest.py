@@ -122,7 +122,6 @@ def test_recipes(db: Session) -> list:
             ingredients=json.dumps(["ingredient1", "ingredient2"]),
             instructions="Mix and cook",
             difficulty="medium",
-            tags=json.dumps(["pasta", "vegetarian"]),
             image_url="https://example.com/image.jpg",
         )
         db.add(recipe)

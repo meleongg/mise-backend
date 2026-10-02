@@ -72,8 +72,6 @@ class UserCreate(BaseModel):
     )
     city: Optional[str] = Field(None, max_length=100)
     preferred_retailer: Optional[str] = Field(None, max_length=100)
-    sodie_memory_enabled: Optional[bool] = None
-    chat_retention_policy: Optional[Literal["3_months", "18_months", "36_months", "manual"]] = None
 
 
 class UserUpdate(BaseModel):
@@ -107,13 +105,10 @@ class UserUpdate(BaseModel):
     )
     city: Optional[str] = Field(None, max_length=100)
     preferred_retailer: Optional[str] = Field(None, max_length=100)
-    sodie_memory_enabled: Optional[bool] = None
-    chat_retention_policy: Optional[Literal["3_months", "18_months", "36_months", "manual"]] = None
 
 
 class PantryItemInput(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
-    is_baseline: bool = False
 
     @field_validator("name")
     @classmethod
@@ -248,8 +243,6 @@ class UserResponse(BaseModel):
     recipe_repeat_preference: str = "standard"
     city: Optional[str] = None
     preferred_retailer: Optional[str] = None
-    sodie_memory_enabled: bool = False
-    chat_retention_policy: str = "18_months"
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -321,7 +314,6 @@ class RecipeResponse(BaseModel):
     ingredients: str
     instructions: str
     difficulty: str
-    tags: Optional[str]
     image_url: Optional[str]
     image_attribution_photographer: Optional[str] = None
     image_attribution_url: Optional[str] = None

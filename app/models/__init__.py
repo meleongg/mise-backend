@@ -85,10 +85,6 @@ class User(Base):
     )  # standard (14d cooldown) or sooner (7d)
     city = Column(String(100), nullable=True)
     preferred_retailer = Column(String(100), nullable=True)
-    sodie_memory_enabled = Column(Boolean, nullable=False, default=False)
-    chat_retention_policy = Column(
-        String(20), nullable=False, default="18_months"
-    )
     hashed_password = Column(
         String, nullable=False
     )  # Store hashed password for authentication
@@ -124,7 +120,6 @@ class UserPantryItem(Base):
     id = Column(GUID, primary_key=True, default=uuid.uuid4, index=True)
     user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
     name = Column(String(200), nullable=False)
-    is_baseline = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="pantry_items")
@@ -167,7 +162,6 @@ class Recipe(Base):
     ingredients = Column(Text, nullable=False)  # JSON string of ingredients
     instructions = Column(Text, nullable=False)
     difficulty = Column(String(20), nullable=False)  # easy, medium, hard
-    tags = Column(Text)  # JSON string of tags
     image_url = Column(String(500))
     image_attribution_photographer = Column(String(200), nullable=True)
     image_attribution_url = Column(String(500), nullable=True)
@@ -180,7 +174,6 @@ class Recipe(Base):
     # AI fields
     content_text = Column(TEXT, nullable=True)  # Full text for embedding
     embedding = Column(Vector(1536), nullable=True)  # Vector embedding
-    is_ai_generated = Column(Boolean, default=False)  # Flag for AI origin
 
     # AI-augmented metadata fields
     dietary_tags = Column(
@@ -269,10 +262,6 @@ class UserRecipeProgress(Base):
     # Relationships
     user = relationship("User", back_populates="recipe_progress")
     recipe = relationship("Recipe", back_populates="recipe_progress")
-
-    # Enhanced feedback for AI
-    satisfaction_rating = Column(Integer, nullable=True)  # 1-5 rating
-    difficulty_rating = Column(Integer, nullable=True)  # 1-5 rating
 
 
 class RecipeSuggestion(Base):
