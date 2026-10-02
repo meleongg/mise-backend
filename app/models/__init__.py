@@ -198,9 +198,6 @@ class WeeklyPlan(Base):
     id = Column(GUID, primary_key=True, default=uuid.uuid4, index=True)
     user_id = Column(GUID, ForeignKey("users.id"), nullable=False)
     week_number = Column(Integer, nullable=False)  # week of the course (1-N)
-    recipe_schedule = Column(
-        Text, nullable=False
-    )  # JSON string of ordered recipes: [{"recipe_id": "uuid", "order": 0}, ...]
     swap_count = Column(Integer, default=0)  # Number of swaps used this week (max 3)
     generated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     is_unlocked = Column(Boolean, default=False)
@@ -219,7 +216,7 @@ class WeeklyPlan(Base):
 
 
 class WeeklyPlanEntry(Base):
-    """Normalized plan slot with optional personal-recipe lineage (dual-writes with recipe_schedule)."""
+    """Normalized plan slot with optional personal-recipe lineage."""
 
     __tablename__ = "weekly_plan_entries"
 

@@ -10,6 +10,7 @@ from app.models import (
     Recipe,
     RecipeSuggestion,
     PersonalRecipe,
+    ShoppingListItemSource,
 )
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import select
@@ -17,58 +18,7 @@ from fastapi import HTTPException
 from app.constants import get_recipe_cooldown_days
 
 
-# Recipe Schedule Helper Functions
-def create_recipe_schedule(recipe_ids: List[str]) -> str:
-    """
-    Convert a list of recipe IDs to an ordered recipe schedule JSON string.
-
-    Args:
-        recipe_ids: List of recipe ID strings in desired order
-
-    Returns:
-        JSON string of ordered recipe schedule: [{"recipe_id": "uuid", "order": 0}, ...]
-    """
-    schedule = [{"recipe_id": rid, "order": idx} for idx, rid in enumerate(recipe_ids)]
-    return json.dumps(schedule)
-
-
-def parse_recipe_schedule(recipe_schedule_json: str) -> List[str]:
-    """
-    Parse a recipe schedule JSON string to extract ordered recipe IDs.
-
-    Args:
-        recipe_schedule_json: JSON string of recipe schedule
-
-    Returns:
-        List of recipe ID strings in order
-    """
-    schedule = json.loads(recipe_schedule_json)
-    # Sort by order field to ensure correct sequence
-    sorted_schedule = sorted(schedule, key=lambda x: x.get("order", 0))
-    return [item["recipe_id"] for item in sorted_schedule]
-
-
-def swap_recipe_in_schedule(recipe_schedule_json: str, old_id: str, new_id: str) -> str:
-    """
-    Swap a recipe in the schedule while maintaining order positions.
-
-    Args:
-        recipe_schedule_json: JSON string of recipe schedule
-        old_id: UUID of recipe to remove
-        new_id: UUID of recipe to add in its place
-
-    Returns:
-        Updated JSON string with new recipe at same position
-    """
-    schedule = json.loads(recipe_schedule_json)
-
-    # Find and replace the recipe with matching ID
-    for item in schedule:
-        if item["recipe_id"] == old_id:
-            item["recipe_id"] = new_id
-            break
-
-    return json.dumps(schedule)
+# Plan entry helpers (sole source of truth for meal membership / order)
 
 
 def _recipe_entry_snapshot(recipe: Recipe) -> str:
@@ -106,30 +56,63 @@ def serialize_plan_entry(entry: WeeklyPlanEntry) -> dict:
     }
 
 
-def sync_plan_entries_from_schedule(plan: WeeklyPlan, db: Session) -> list[WeeklyPlanEntry]:
-    """Replace plan entries to match recipe_schedule (catalog refs for this slice)."""
-    recipe_ids = parse_recipe_schedule(plan.recipe_schedule)
+def list_plan_entries(plan: WeeklyPlan, db: Session) -> list[WeeklyPlanEntry]:
+    """Ordered plan slots (entries are the sole membership source of truth)."""
+    return (
+        db.query(WeeklyPlanEntry)
+        .filter(WeeklyPlanEntry.weekly_plan_id == plan.id)
+        .order_by(WeeklyPlanEntry.position.asc())
+        .all()
+    )
+
+
+def ordered_catalog_ids_from_entries(entries: list[WeeklyPlanEntry]) -> list[str]:
+    return [
+        str(entry.catalog_recipe_id)
+        for entry in entries
+        if entry.catalog_recipe_id is not None
+    ]
+
+
+def ordered_catalog_uuids_from_entries(
+    entries: list[WeeklyPlanEntry],
+) -> list[uuid.UUID]:
+    return [
+        entry.catalog_recipe_id
+        for entry in entries
+        if entry.catalog_recipe_id is not None
+    ]
+
+
+def _clear_entry_dependents(plan_id: uuid.UUID, db: Session) -> None:
+    """Delete shopping sources that reference this plan's entries, then the entries."""
+    entry_ids = [
+        row[0]
+        for row in db.query(WeeklyPlanEntry.id)
+        .filter(WeeklyPlanEntry.weekly_plan_id == plan_id)
+        .all()
+    ]
+    if entry_ids:
+        db.query(ShoppingListItemSource).filter(
+            ShoppingListItemSource.weekly_plan_entry_id.in_(entry_ids)
+        ).delete(synchronize_session=False)
     db.query(WeeklyPlanEntry).filter(
-        WeeklyPlanEntry.weekly_plan_id == plan.id
+        WeeklyPlanEntry.weekly_plan_id == plan_id
     ).delete(synchronize_session=False)
 
-    if not recipe_ids:
+
+def replace_plan_catalog_entries(
+    plan: WeeklyPlan, recipes: list[Recipe], db: Session
+) -> list[WeeklyPlanEntry]:
+    """Replace all plan slots with the given catalog recipes (ordered)."""
+    _clear_entry_dependents(plan.id, db)
+    if not recipes:
         db.flush()
         return []
 
-    recipes = {
-        str(r.id): r
-        for r in db.query(Recipe)
-        .filter(Recipe.id.in_([uuid.UUID(rid) for rid in recipe_ids]))
-        .all()
-    }
-
     now = datetime.now(timezone.utc)
     entries: list[WeeklyPlanEntry] = []
-    for idx, recipe_id in enumerate(recipe_ids):
-        recipe = recipes.get(recipe_id)
-        if not recipe:
-            continue
+    for idx, recipe in enumerate(recipes):
         entry = WeeklyPlanEntry(
             id=uuid.uuid4(),
             weekly_plan_id=plan.id,
@@ -149,16 +132,56 @@ def sync_plan_entries_from_schedule(plan: WeeklyPlan, db: Session) -> list[Weekl
 
 
 def ensure_plan_entries(plan: WeeklyPlan, db: Session) -> list[WeeklyPlanEntry]:
-    """Lazy-backfill entries from recipe_schedule when missing."""
-    existing = (
-        db.query(WeeklyPlanEntry)
-        .filter(WeeklyPlanEntry.weekly_plan_id == plan.id)
-        .order_by(WeeklyPlanEntry.position.asc())
-        .all()
+    """Return ordered entries for a plan (no schedule backfill)."""
+    return list_plan_entries(plan, db)
+
+
+def swap_catalog_recipe_on_entry(
+    plan: WeeklyPlan,
+    old_recipe_id: uuid.UUID,
+    new_recipe: Recipe,
+    db: Session,
+) -> WeeklyPlanEntry:
+    """Replace catalog recipe on the first matching entry; preserve entry id/position."""
+    entries = list_plan_entries(plan, db)
+    target = next(
+        (e for e in entries if e.catalog_recipe_id == old_recipe_id),
+        None,
     )
-    if existing:
-        return existing
-    return sync_plan_entries_from_schedule(plan, db)
+    if target is None:
+        raise ValueError(f"Recipe {old_recipe_id} not found in plan entries")
+
+    target.catalog_recipe_id = new_recipe.id
+    target.personal_recipe_id = None
+    target.recipe_snapshot = _recipe_entry_snapshot(new_recipe)
+    target.selected_servings = getattr(new_recipe, "portion_size", None)
+    target.lifecycle_state = "planned"
+    target.updated_at = datetime.now(timezone.utc)
+    db.flush()
+    return target
+
+
+def append_catalog_entry(
+    plan: WeeklyPlan, recipe: Recipe, db: Session
+) -> WeeklyPlanEntry:
+    """Append a catalog recipe as the next plan slot."""
+    entries = list_plan_entries(plan, db)
+    now = datetime.now(timezone.utc)
+    entry = WeeklyPlanEntry(
+        id=uuid.uuid4(),
+        weekly_plan_id=plan.id,
+        position=len(entries),
+        catalog_recipe_id=recipe.id,
+        personal_recipe_id=None,
+        recipe_snapshot=_recipe_entry_snapshot(recipe),
+        selected_servings=getattr(recipe, "portion_size", None),
+        lifecycle_state="planned",
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(entry)
+    db.flush()
+    return entry
 
 
 def _personal_entry_snapshot(personal: PersonalRecipe, catalog: Recipe | None) -> str:
@@ -378,7 +401,7 @@ def append_catalog_recipe_to_plan(
     *,
     plan: WeeklyPlan | None = None,
 ) -> dict:
-    """Append a catalog recipe to the active plan schedule + entries.
+    """Append a catalog recipe to the active plan entries.
 
     Returns a small result dict for proposal impact:
     - outcome: scheduled | already_scheduled | no_active_plan
@@ -388,22 +411,16 @@ def append_catalog_recipe_to_plan(
     if target is None:
         return {"outcome": "no_active_plan", "week_number": None}
 
-    try:
-        recipe_ids = parse_recipe_schedule(target.recipe_schedule or "[]")
-    except (TypeError, json.JSONDecodeError, ValueError):
-        recipe_ids = []
-
+    entries = list_plan_entries(target, db)
+    recipe_ids = ordered_catalog_ids_from_entries(entries)
     recipe_id_str = str(recipe.id)
     if recipe_id_str in recipe_ids:
-        ensure_plan_entries(target, db)
         return {
             "outcome": "already_scheduled",
             "week_number": int(target.week_number),
         }
 
-    recipe_ids.append(recipe_id_str)
-    target.recipe_schedule = create_recipe_schedule(recipe_ids)
-    sync_plan_entries_from_schedule(target, db)
+    append_catalog_entry(target, recipe, db)
 
     existing_progress = (
         db.query(UserRecipeProgress)
@@ -443,27 +460,22 @@ def append_catalog_recipe_to_plan(
 class WeeklyPlanService:
     def load_recipes_for_plan(self, plan: WeeklyPlan, db: Session) -> WeeklyPlan:
         """Load the full Recipe objects for a WeeklyPlan and attach them as a property."""
-        ensure_plan_entries(plan, db)
-        recipe_ids = parse_recipe_schedule(plan.recipe_schedule)
+        entries = list_plan_entries(plan, db)
+        recipe_ids = ordered_catalog_ids_from_entries(entries)
         recipe_uuids = [uuid.UUID(rid) for rid in recipe_ids]
 
-        # Query all recipes in the correct order
-        recipes = db.query(Recipe).filter(Recipe.id.in_(recipe_uuids)).all()
-
-        # Sort recipes to match the order in recipe_ids
+        recipes = (
+            db.query(Recipe).filter(Recipe.id.in_(recipe_uuids)).all()
+            if recipe_uuids
+            else []
+        )
         recipes_dict = {str(r.id): r for r in recipes}
         ordered_recipes = [
             recipes_dict[rid] for rid in recipe_ids if rid in recipes_dict
         ]
 
-        # Attach as a dynamic attribute (Pydantic will pick it up)
         plan.recipes = ordered_recipes
-        plan.entries = (
-            db.query(WeeklyPlanEntry)
-            .filter(WeeklyPlanEntry.weekly_plan_id == plan.id)
-            .order_by(WeeklyPlanEntry.position.asc())
-            .all()
-        )
+        plan.entries = entries
         return plan
 
     def get_user_exclusion_ids(
@@ -611,10 +623,17 @@ class WeeklyPlanService:
         Also creates UserRecipeProgress entries for each recipe in the plan.
         """
 
-        # Create the recipe schedule with ordered recipes
-        recipe_schedule_str = create_recipe_schedule(
-            [str(uid) for uid in recipe_ids_from_agent]
+        recipes = (
+            db.query(Recipe).filter(Recipe.id.in_(recipe_ids_from_agent)).all()
+            if recipe_ids_from_agent
+            else []
         )
+        recipes_by_id = {r.id: r for r in recipes}
+        ordered_recipes = [
+            recipes_by_id[rid]
+            for rid in recipe_ids_from_agent
+            if rid in recipes_by_id
+        ]
 
         existing_plan = (
             db.query(WeeklyPlan)
@@ -624,8 +643,6 @@ class WeeklyPlanService:
             .first()
         )
         if existing_plan:
-            # Update the existing plan's recipes with the agent's new list
-            existing_plan.recipe_schedule = recipe_schedule_str
             db.add(existing_plan)
 
             # Delete old progress entries for this week and create new ones
@@ -649,7 +666,7 @@ class WeeklyPlanService:
                 clear_existing=True,
             )
 
-            sync_plan_entries_from_schedule(existing_plan, db)
+            replace_plan_catalog_entries(existing_plan, ordered_recipes, db)
             db.commit()
             db.refresh(existing_plan)
 
@@ -660,7 +677,6 @@ class WeeklyPlanService:
         new_plan = WeeklyPlan(
             user_id=user.id,
             week_number=week_number,
-            recipe_schedule=recipe_schedule_str,
             generated_at=datetime.now(timezone.utc),
             is_unlocked=True,  # Auto-unlock the first plan
         )
@@ -681,7 +697,7 @@ class WeeklyPlanService:
             db=db,
         )
 
-        sync_plan_entries_from_schedule(new_plan, db)
+        replace_plan_catalog_entries(new_plan, ordered_recipes, db)
 
         # Commit everything
         db.commit()

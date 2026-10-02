@@ -16,6 +16,7 @@ sys.path.insert(0, str(backend_root))
 
 from main import app
 from app.database import get_db
+from app.services.weekly_plan import replace_plan_catalog_entries
 from app.models import Base, User, Recipe, WeeklyPlan, UserRecipeProgress
 from app.utils.auth import get_current_user
 import app.utils.password as password_utils
@@ -135,18 +136,17 @@ def test_recipes(db: Session) -> list:
 @pytest.fixture
 def test_plan(db: Session, test_user: User, test_recipes: list):
     """Create a test weekly plan"""
-    recipe_schedule = json.dumps([{"recipe_id": str(test_recipes[0].id), "order": 0}])
     plan = WeeklyPlan(
         id=uuid.uuid4(),
         user_id=test_user.id,
         week_number=1,
-        recipe_schedule=recipe_schedule,
         swap_count=0,
         generated_at=datetime.now(timezone.utc),
         is_unlocked=True,
     )
     db.add(plan)
     db.flush()
+    replace_plan_catalog_entries(plan, [test_recipes[0]], db)
     db.refresh(plan)
     return plan
 

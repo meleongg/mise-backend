@@ -8,7 +8,7 @@ from app.models import WeeklyPlan, WeeklyPlanEntry
 from app.services.shopping import (
     build_aggregated_items,
 )
-from app.services.weekly_plan import create_recipe_schedule
+from app.services.weekly_plan import replace_plan_catalog_entries
 
 
 def _entry(db, plan, recipe, position, ingredients):
@@ -55,9 +55,6 @@ def test_aggregate_sums_shared_onion_across_entries(db, test_user, test_recipes)
         id=uuid.uuid4(),
         user_id=test_user.id,
         week_number=4,
-        recipe_schedule=create_recipe_schedule(
-            [str(test_recipes[0].id), str(test_recipes[1].id)]
-        ),
         swap_count=0,
     )
     db.add(plan)
@@ -90,9 +87,6 @@ def test_ambiguous_units_stay_separate(db, test_user, test_recipes):
         id=uuid.uuid4(),
         user_id=test_user.id,
         week_number=5,
-        recipe_schedule=create_recipe_schedule(
-            [str(test_recipes[0].id), str(test_recipes[1].id)]
-        ),
         swap_count=0,
     )
     db.add(plan)
@@ -120,9 +114,7 @@ def test_ambiguous_units_stay_separate(db, test_user, test_recipes):
 def test_generate_preserves_checked_and_manual_edits(
     client, db, test_user, test_recipes, test_plan
 ):
-    test_plan.recipe_schedule = create_recipe_schedule(
-        [str(test_recipes[0].id), str(test_recipes[1].id)]
-    )
+    replace_plan_catalog_entries(test_plan, [test_recipes[0], test_recipes[1]], db)
     db.flush()
     _entry(
         db,
@@ -175,7 +167,7 @@ def test_generate_preserves_checked_and_manual_edits(
 
 
 def test_get_active_shopping_list_auth_isolation(client, db, test_user, test_recipes, test_plan):
-    test_plan.recipe_schedule = create_recipe_schedule([str(test_recipes[0].id)])
+    replace_plan_catalog_entries(test_plan, [test_recipes[0]], db)
     db.flush()
     _entry(
         db,
@@ -205,9 +197,6 @@ def test_omit_entry_drops_unique_ingredient_keeps_shared(
         id=uuid.uuid4(),
         user_id=test_user.id,
         week_number=6,
-        recipe_schedule=create_recipe_schedule(
-            [str(test_recipes[0].id), str(test_recipes[1].id)]
-        ),
         swap_count=0,
     )
     db.add(plan)
@@ -241,7 +230,7 @@ def test_omit_entry_drops_unique_ingredient_keeps_shared(
 def test_sync_checks_last_client_timestamp_wins(
     client, db, test_user, test_recipes, test_plan
 ):
-    test_plan.recipe_schedule = create_recipe_schedule([str(test_recipes[0].id)])
+    replace_plan_catalog_entries(test_plan, [test_recipes[0]], db)
     db.flush()
     _entry(
         db,

@@ -277,9 +277,8 @@ def test_shopping_scope_returns_plan_week_not_list_id(
 
     from app.models import WeeklyPlanEntry
     from app.services.sodie_chat_context import authorize_page_context
-    from app.services.weekly_plan import create_recipe_schedule
-
-    test_plan.recipe_schedule = create_recipe_schedule([str(test_recipes[0].id)])
+    from app.services.weekly_plan import replace_plan_catalog_entries
+    replace_plan_catalog_entries(test_plan, [test_recipes[0]], db)
     db.add(
         WeeklyPlanEntry(
             id=uuid.uuid4(),

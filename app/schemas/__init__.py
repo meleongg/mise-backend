@@ -395,7 +395,6 @@ class WeeklyPlanResponse(BaseModel):
     id: UUID
     user_id: UUID
     week_number: int
-    recipe_schedule: str
     generated_at: datetime
     is_unlocked: bool
     recipes: List[RecipeResponse] = []

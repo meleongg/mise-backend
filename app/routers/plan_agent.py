@@ -21,10 +21,10 @@ from app.database import get_db
 from app.models import User, WeeklyPlan, UserRecipeProgress, Recipe
 from app.services.weekly_plan import (
     WeeklyPlanService,
-    create_recipe_schedule,
-    parse_recipe_schedule,
-    swap_recipe_in_schedule,
-    sync_plan_entries_from_schedule,
+    list_plan_entries,
+    ordered_catalog_ids_from_entries,
+    ordered_catalog_uuids_from_entries,
+    swap_catalog_recipe_on_entry,
     validate_recipe_can_be_swapped,
     replace_swapped_recipe_progress,
 )
@@ -189,15 +189,12 @@ async def swap_recipe_endpoint(
 
         print(f"[SwapRecipe] Swaps used: {current_swap_count}/{MAX_SWAPS_PER_WEEK}")
 
-        # 3. Load current plan and parse recipe_schedule
-        try:
-            current_recipe_ids_str = parse_recipe_schedule(target_plan.recipe_schedule)
-            print(
-                f"[SwapRecipe] Current plan has {len(current_recipe_ids_str)} recipes"
-            )
-        except Exception as e:
-            print(f"[SwapRecipe] Error parsing recipe schedule: {e}")
-            raise HTTPException(status_code=400, detail="Invalid plan data")
+        # 3. Load current plan entries (sole source of truth)
+        entries = list_plan_entries(target_plan, db)
+        current_recipe_ids_str = ordered_catalog_ids_from_entries(entries)
+        print(
+            f"[SwapRecipe] Current plan has {len(current_recipe_ids_str)} recipes"
+        )
 
         # 4. Validate recipe_id_to_replace is in the plan
         recipe_id_str = str(swap_request.recipe_id_to_replace)
@@ -361,17 +358,6 @@ The backend will handle inserting it into the meal plan."""
             new_recipe_id_str = matches[0]
             print(f"[SwapRecipe] Extracted recipe ID: {new_recipe_id_str}")
 
-        # 11. Backend performs deterministic swap
-        try:
-            # Use helper function to swap recipe in schedule while maintaining order
-            updated_schedule_json = swap_recipe_in_schedule(
-                target_plan.recipe_schedule, recipe_id_str, new_recipe_id_str
-            )
-            print(f"[SwapRecipe] Swapped {recipe_id_str} → {new_recipe_id_str}")
-            print(f"[SwapRecipe] Updated schedule: {updated_schedule_json}")
-        except ValueError:
-            raise ValueError(f"Recipe {recipe_id_str} not found in current plan")
-
         # Get new recipe details
         new_recipe = (
             db.query(Recipe).filter(Recipe.id == uuid.UUID(new_recipe_id_str)).first()
@@ -381,11 +367,16 @@ The backend will handle inserting it into the meal plan."""
                 status_code=500, detail="New recipe not found in database"
             )
 
-        # 12. Update WeeklyPlan.recipe_schedule in database
+        # 11–12. Deterministic entry swap + progress/timeline updates
         try:
-            target_plan.recipe_schedule = updated_schedule_json
+            swap_catalog_recipe_on_entry(
+                target_plan,
+                swap_request.recipe_id_to_replace,
+                new_recipe,
+                db,
+            )
+            print(f"[SwapRecipe] Swapped {recipe_id_str} → {new_recipe_id_str}")
 
-            # Record swap suggestions for cooldown tracking
             plan_service.record_recipe_suggestions(
                 user_id=user.id,
                 week_number=target_plan.week_number,
@@ -409,32 +400,33 @@ The backend will handle inserting it into the meal plan."""
                 db=db,
             )
 
-            # Increment swap count for this week
             target_plan.swap_count = current_swap_count + 1
             print(f"[SwapRecipe] Incremented swap_count to {target_plan.swap_count}")
 
-            sync_plan_entries_from_schedule(target_plan, db)
-
-            # Refresh prep timeline snapshot for the new schedule
-            ordered_ids = [
-                uuid.UUID(rid) for rid in parse_recipe_schedule(updated_schedule_json)
-            ]
+            ordered_ids = ordered_catalog_uuids_from_entries(
+                list_plan_entries(target_plan, db)
+            )
             swapped_recipes = (
                 db.query(Recipe).filter(Recipe.id.in_(ordered_ids)).all()
                 if ordered_ids
                 else []
             )
+            # Keep recipe list in plan order for timeline
+            by_id = {r.id: r for r in swapped_recipes}
+            ordered_recipes = [by_id[rid] for rid in ordered_ids if rid in by_id]
             rebuild_and_save_prep_timeline(
                 target_plan,
                 user,
-                swapped_recipes,
+                ordered_recipes,
                 ordered_recipe_ids=ordered_ids,
             )
 
             db.commit()
             db.refresh(target_plan)
-            print(f"[SwapRecipe] ✅ Database updated successfully")
-            print(f"[SwapRecipe] Saved to Supabase: {updated_schedule_json}")
+            print("[SwapRecipe] ✅ Database updated successfully")
+        except ValueError as e:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             db.rollback()
             print(f"[SwapRecipe] ❌ Database update failed: {e}")

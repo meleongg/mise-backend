@@ -15,9 +15,7 @@ from app.services.plan_timeline_attach import (
     save_prep_timeline_on_plan,
     timeline_to_json,
 )
-from app.services.weekly_plan import create_recipe_schedule
-
-
+from app.services.weekly_plan import replace_plan_catalog_entries
 def _user(**overrides) -> User:
     user = User(
         id=uuid.uuid4(),
@@ -77,7 +75,6 @@ def test_attach_prefers_snapshot_over_recompute(db, test_user):
         id=uuid.uuid4(),
         user_id=test_user.id,
         week_number=1,
-        recipe_schedule=create_recipe_schedule([str(recipe.id)]),
         is_unlocked=True,
     )
     timeline = build_prep_timeline(test_user, [recipe], ordered_recipe_ids=[recipe.id])
@@ -112,7 +109,6 @@ def test_attach_computes_and_lazy_persists_when_missing(db, test_user):
         id=uuid.uuid4(),
         user_id=test_user.id,
         week_number=2,
-        recipe_schedule=create_recipe_schedule([str(recipe.id)]),
         is_unlocked=True,
         prep_timeline_json=None,
     )
@@ -145,14 +141,13 @@ def test_rebuild_and_save_updates_snapshot(db, test_user):
         id=uuid.uuid4(),
         user_id=test_user.id,
         week_number=3,
-        recipe_schedule=create_recipe_schedule([str(a.id)]),
         is_unlocked=True,
     )
     save_prep_timeline_on_plan(
         plan, build_prep_timeline(test_user, [a], ordered_recipe_ids=[a.id])
     )
     first = plan.prep_timeline_json
-    plan.recipe_schedule = create_recipe_schedule([str(b.id)])
+    replace_plan_catalog_entries(plan, [b], db)
     rebuild_and_save_prep_timeline(
         plan, test_user, [b], ordered_recipe_ids=[b.id]
     )
