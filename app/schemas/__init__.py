@@ -316,7 +316,6 @@ class AccessTokenResponse(BaseModel):
 # Recipe schemas
 class RecipeResponse(BaseModel):
     id: UUID
-    external_id: Optional[str] = None
     name: str
     cuisine: str
     ingredients: str

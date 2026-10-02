@@ -42,7 +42,6 @@ def _user(**overrides) -> User:
 def _recipe(**overrides) -> Recipe:
     recipe = Recipe(
         id=uuid.uuid4(),
-        external_id=f"ext-{uuid.uuid4()}",
         name="Snap Dish",
         cuisine="Italian",
         ingredients=json.dumps([{"name": "pasta", "measure": "200 g"}]),
@@ -139,7 +138,7 @@ def test_attach_computes_and_lazy_persists_when_missing(db, test_user):
 
 def test_rebuild_and_save_updates_snapshot(db, test_user):
     a = _recipe(name="A")
-    b = _recipe(name="B", external_id=f"b-{uuid.uuid4()}")
+    b = _recipe(name="B")
     db.add_all([a, b])
     db.flush()
     plan = WeeklyPlan(

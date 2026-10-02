@@ -162,7 +162,6 @@ class Recipe(Base):
     __tablename__ = "recipes"
 
     id = Column(GUID, primary_key=True, default=uuid.uuid4, index=True)
-    external_id = Column(String(50), unique=True, index=True)  # TheMealDB ID
     name = Column(String(200), nullable=False)
     cuisine = Column(String(50), nullable=False)
     ingredients = Column(Text, nullable=False)  # JSON string of ingredients

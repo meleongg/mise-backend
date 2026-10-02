@@ -144,7 +144,6 @@ def persist_recipe(db: Session, generated: GeneratedRecipe, embeddings: OpenAIEm
     embedding = embeddings.embed_query(content_text)
     recipe = Recipe(
         id=uuid.uuid4(),
-        external_id=None,
         name=generated.name.strip(),
         cuisine=generated.cuisine,
         ingredients=ingredients_json,

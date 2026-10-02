@@ -514,7 +514,6 @@ def generate_and_save_new_recipe(recipe_description: str) -> str:
                 cook_time_minutes=generated_recipe_data.cook_time_minutes,
                 skill_level_validated=generated_recipe_data.skill_level_validated,
                 is_ai_generated=True,
-                external_id=f"ai-generated-{uuid.uuid4()}",
                 content_text=content_text,
             )
 

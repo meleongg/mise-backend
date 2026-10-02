@@ -39,7 +39,6 @@ def _user(**overrides) -> User:
 def _recipe(**overrides) -> Recipe:
     recipe = Recipe(
         id=uuid.uuid4(),
-        external_id=f"ext-{uuid.uuid4()}",
         name="Pasta Night",
         cuisine="Italian",
         ingredients=json.dumps([{"name": "pasta", "measure": "200 g"}]),
@@ -59,7 +58,7 @@ def _recipe(**overrides) -> Recipe:
 def test_timeline_orders_shop_then_cook_days():
     user = _user()
     a = _recipe(name="A")
-    b = _recipe(name="B", external_id=f"b-{uuid.uuid4()}")
+    b = _recipe(name="B")
     timeline = build_prep_timeline(user, [a, b], ordered_recipe_ids=[a.id, b.id])
     kinds = [item.kind for item in timeline.items]
     assert kinds[0] == "shop"
@@ -112,7 +111,7 @@ def test_recipe_explanations_cuisine_and_time():
 def test_ordered_recipe_ids_control_day_labels():
     user = _user()
     first = _recipe(name="First")
-    second = _recipe(name="Second", external_id=f"s-{uuid.uuid4()}")
+    second = _recipe(name="Second")
     # Pass recipes in reverse physical order but ordered ids first→second
     timeline = build_prep_timeline(
         user, [second, first], ordered_recipe_ids=[first.id, second.id]

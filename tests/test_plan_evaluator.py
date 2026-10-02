@@ -40,7 +40,6 @@ def _user(**overrides) -> User:
 def _recipe(**overrides) -> Recipe:
     recipe = Recipe(
         id=uuid.uuid4(),
-        external_id=f"ext-{uuid.uuid4()}",
         name="Clear Dish",
         cuisine="Italian",
         ingredients=json.dumps(
@@ -74,7 +73,7 @@ def test_evaluator_high_confidence_clean_recipes(db, test_user):
     test_user.frequency = 2
     db.flush()
     a = _recipe()
-    b = _recipe(name="Salad", external_id=f"b-{uuid.uuid4()}")
+    b = _recipe(name="Salad")
     db.add_all([a, b])
     db.flush()
     result = evaluate_plan_candidates(db, test_user, [a, b])
@@ -134,7 +133,7 @@ def test_llm_assisted_merges_worse_confidence(db, test_user):
     test_user.preferred_retailer = "QFC"
     db.flush()
     a = _recipe()
-    b = _recipe(name="Soup", external_id=f"soup-{uuid.uuid4()}")
+    b = _recipe(name="Soup")
     db.add_all([a, b])
     db.flush()
 

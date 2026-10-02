@@ -83,7 +83,6 @@ async def seed_database(clear_first: bool = False):
         print(f"\n🍽️  Creating mock Chinese recipes...")
         mock_recipes_data = [
             {
-                "external_id": "1001",
                 "name": "Mock Sweet and Sour Pork",
                 "cuisine": "Chinese",
                 "ingredients": json.dumps(
@@ -103,7 +102,6 @@ async def seed_database(clear_first: bool = False):
                 "is_ai_generated": False,
             },
             {
-                "external_id": "1002",
                 "name": "Mock Kung Pao Chicken",
                 "cuisine": "Chinese",
                 "ingredients": json.dumps(
@@ -122,7 +120,6 @@ async def seed_database(clear_first: bool = False):
                 "is_ai_generated": False,
             },
             {
-                "external_id": "1003",
                 "name": "Mock Mapo Tofu",
                 "cuisine": "Chinese",
                 "ingredients": json.dumps(

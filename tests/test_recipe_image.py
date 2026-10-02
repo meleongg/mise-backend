@@ -21,7 +21,6 @@ def sample_recipe():
         ingredients='[{"name": "rice noodles", "measure": "8 oz"}]',
         instructions="[]",
         difficulty="medium",
-        external_id="test-1",
     )
 
 
@@ -75,7 +74,6 @@ def test_build_queries_prioritize_vegetarian():
         ingredients=json.dumps([{"name": "corn", "measure": "2 cups"}]),
         instructions="[]",
         difficulty="easy",
-        external_id="veg-1",
         dietary_tags='["vegetarian"]',
     )
     queries = ri.build_search_queries(recipe)
@@ -91,7 +89,6 @@ def test_merge_dietary_includes_user_restrictions():
         ingredients="[]",
         instructions="[]",
         difficulty="easy",
-        external_id="x",
         dietary_tags=None,
     )
     merged = ri.merge_dietary_context(recipe, ["vegetarian"])
@@ -157,7 +154,6 @@ def test_resolve_uses_dietary_query(mock_search, monkeypatch):
         ingredients="[]",
         instructions="[]",
         difficulty="easy",
-        external_id="veg-2",
         dietary_tags='["vegetarian"]',
     )
     mock_search.return_value = [
@@ -208,7 +204,6 @@ def test_attach_image_if_missing_updates_row(mock_resolve):
         ingredients="[]",
         instructions="[]",
         difficulty="easy",
-        external_id="x",
         image_url=None,
     )
     db = MagicMock()
@@ -231,7 +226,6 @@ def test_attach_recipe_image_force_overwrites(mock_resolve):
         ingredients="[]",
         instructions="[]",
         difficulty="easy",
-        external_id="x",
         image_url=old,
     )
     db = MagicMock()
@@ -252,7 +246,6 @@ def test_attach_recipe_image_force_keeps_old_on_failure(mock_resolve):
         ingredients="[]",
         instructions="[]",
         difficulty="easy",
-        external_id="x",
         image_url=old,
     )
     db = MagicMock()

@@ -117,7 +117,6 @@ def test_recipes(db: Session) -> list:
     for i in range(5):
         recipe = Recipe(
             id=uuid.uuid4(),
-            external_id=f"test_recipe_{i}",
             name=f"Test Recipe {i}",
             cuisine="Italian",
             ingredients=json.dumps(["ingredient1", "ingredient2"]),

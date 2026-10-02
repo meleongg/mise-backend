@@ -31,7 +31,6 @@ def _user(**overrides) -> User:
 def _recipe(**overrides) -> Recipe:
     recipe = Recipe(
         id=uuid.uuid4(),
-        external_id=f"ext-{uuid.uuid4()}",
         name="Safe Pasta",
         cuisine="Italian",
         ingredients=json.dumps(

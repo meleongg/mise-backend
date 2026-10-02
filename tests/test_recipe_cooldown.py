@@ -9,7 +9,6 @@ def _seed_recipe(db, recipe_id: uuid.UUID) -> None:
     db.add(
         Recipe(
             id=recipe_id,
-            external_id=str(recipe_id),
             name="Cooldown Test Recipe",
             cuisine="Italian",
             ingredients='["salt"]',
